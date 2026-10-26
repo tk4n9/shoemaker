@@ -1,0 +1,8 @@
+{
+  "name": "shoemaker",
+  "description": "Set up and steer Shoemaker: scheduled Claude Code agents that propose ideas, wait for your approval on a dashboard, then build and land them through your PR gate.",
+  "author": { "name": "tk4n9" },
+  "homepage": "https://github.com/tk4n9/shoemaker",
+  "repository": "https://github.com/tk4n9/shoemaker",
+  "keywords": ["agents", "automation", "scheduled", "pull-requests", "approval-queue"]
+}

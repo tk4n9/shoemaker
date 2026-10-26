@@ -1,0 +1,14 @@
+{
+  "name": "shoemaker",
+  "owner": {
+    "name": "tk4n9"
+  },
+  "description": "Shoemaker: scheduled Claude Code agents with a human approval queue.",
+  "plugins": [
+    {
+      "name": "shoemaker",
+      "source": "./plugin",
+      "description": "Set up and steer Shoemaker: scheduled Claude Code agents with an approval queue."
+    }
+  ]
+}

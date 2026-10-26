@@ -1,0 +1,13 @@
+[Unit]
+Description=Schedule of Shoemaker rounds for __PROJECT__
+
+[Timer]
+# Pinned to a timezone, so a change of the system timezone cannot move it. Several
+# times can also be several OnCalendar= lines. A round still going when the next
+# is due makes that one exit at once.
+OnCalendar=__ONCALENDAR__
+# A missed slot (machine asleep or off) is skipped, not started late.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

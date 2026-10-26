@@ -1,0 +1,344 @@
+#!/usr/bin/env bash
+# shoemaker — scheduled coding agents with you in the loop.
+#
+#   shoemaker detect [PATH]                  read-only facts about a repository, for setting up
+#   shoemaker init DIR KEY=VALUE...          create a project's state directory (shoemaker.conf,
+#                                            DIRECTION.md, RULES.md, LEDGER.md, dashboard, queue)
+#   shoemaker schedule "SPEC" [--timezone TZ]   write the systemd units; SPEC is an OnCalendar
+#                                            without timezone: "*-*-* 03:30:00", "*-*-* *:30:00"
+#   shoemaker install [--no-dashboard]       link the units and enable the timer (and the dashboard)
+#   shoemaker uninstall                      disable the timer and the dashboard, remove the links
+#   shoemaker run [--dry-run] [--mode M] [--only suggest|implement|approve] [--model X] [--effort Y] [--force]
+#                                            one round now, in the foreground
+#   shoemaker doctor                         a dry run: preflight, guard, decisions, prompts
+#   shoemaker status                         settings, schedule, queue and the latest rounds
+#   shoemaker team [show|validate FILE]        inspect the active team or validate a proposal
+#   shoemaker queue COMMAND...               the queue (shoemaker queue help)
+#   shoemaker dashboard                      serve the dashboard in the foreground
+#   shoemaker land open|wait|status          publish a build branch through the merge gate (agents)
+#   shoemaker login                          log gh or glab in, in your own terminal
+#   shoemaker update [--check]               pull this checkout's upstream, then restart the
+#                                            dashboards of the projects that run it
+#   shoemaker version
+#
+# Every command but detect, init, update and version works on one project's
+# state directory. Pick it with --state DIR (or -s DIR) before the command; else
+# $SHOEMAKER_STATE; else the worktree's shoemaker.state; else the nearest
+# .shoemaker/ or shoemaker/ holding a shoemaker.conf, from the current
+# directory up.
+
+set -uo pipefail
+SHOEMAKER_HOME="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd -P)"
+H="$SHOEMAKER_HOME/harness"
+VERSION="0.1.0-dev"
+
+die() { echo "shoemaker: $*" >&2; exit 1; }
+say() { echo "shoemaker: $*"; }
+usage() { sed -n '2,/^$/p' "$(readlink -f "${BASH_SOURCE[0]}")" | sed 's/^# \{0,1\}//'; exit "${1:-2}"; }
+# rev: this checkout's commit, when it is a git checkout of its own
+rev() {
+  [ "$(git -C "$SHOEMAKER_HOME" rev-parse --show-toplevel 2>/dev/null)" = "$SHOEMAKER_HOME" ] || return 1
+  git -C "$SHOEMAKER_HOME" rev-parse --short "${1:-HEAD}" 2>/dev/null
+}
+
+state_arg=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -s|--state) state_arg="${2:-}"; shift 2 ;;
+    -h|--help|help) usage 0 ;;
+    *) break ;;
+  esac
+done
+cmd="${1:-}"; [ $# -gt 0 ] && shift
+
+find_state() {
+  local d
+  if [ -n "$state_arg" ]; then d="$state_arg"
+  elif [ -n "${SHOEMAKER_STATE:-}" ]; then d="$SHOEMAKER_STATE"
+  elif d="$(git config --get shoemaker.state 2>/dev/null)" && [ -n "$d" ]; then :
+  else
+    d="$PWD"
+    while :; do
+      [ -f "$d/shoemaker.conf" ] && break
+      [ -f "$d/.shoemaker/shoemaker.conf" ] && { d="$d/.shoemaker"; break; }
+      [ -f "$d/shoemaker/shoemaker.conf" ] && { d="$d/shoemaker"; break; }
+      [ "$d" = / ] && die "no state directory here or above (use --state DIR, or shoemaker init)"
+      d="$(dirname "$d")"
+    done
+  fi
+  [ -f "$d/shoemaker.conf" ] || die "$d has no shoemaker.conf"
+  STATE="$(cd "$d" && pwd -P)"; export SHOEMAKER_STATE="$STATE"
+  # shellcheck disable=SC1091
+  . "$STATE/shoemaker.conf"
+}
+
+dq() { local v="$1"; v="${v//\\/\\\\}"; v="${v//\"/\\\"}"; v="${v//\$/\\\$}"; v="${v//\`/\\\`}"; printf '"%s"' "$v"; }
+to_seconds() { case "$1" in *h) echo $(( ${1%h} * 3600 )) ;; *m) echo $(( ${1%m} * 60 )) ;; *s) echo "${1%s}" ;; *) echo "$1" ;; esac; }
+# render SRC DEST: copy SRC to DEST with the __PLACEHOLDERS__ in R filled
+declare -A R=()
+render() {
+  local s k
+  s="$(cat "$1"; printf x)"; s="${s%x}"
+  for k in "${!R[@]}"; do s="${s//__${k}__/${R[$k]}}"; done
+  printf '%s' "$s" >"$2"
+}
+free_port() {  # free_port <from>: the first port from <from> nothing listens on
+  local p="$1"
+  while ss -Hltn "sport = :$p" 2>/dev/null | grep -q .; do p=$((p + 1)); done
+  echo "$p"
+}
+node_ok() {
+  command -v node >/dev/null || die "Node.js 18 or newer is needed (node is not on PATH)"
+  [ -d "$SHOEMAKER_HOME/dashboard/node_modules/better-sqlite3" ] \
+    || die "the dashboard's dependencies are missing: run (cd $(printf '%q' "$SHOEMAKER_HOME/dashboard") && npm ci)"
+}
+
+cmd_init() {
+  local dir="${1:-}"; [ -n "$dir" ] || die "usage: shoemaker init DIR KEY=VALUE... (see shoemaker detect)"; shift
+  mkdir -p "$dir"; dir="$(cd "$dir" && pwd -P)"
+  [ -e "$dir/shoemaker.conf" ] && die "$dir/shoemaker.conf exists; edit it, or remove it to start over"
+  node_ok
+  local conf kv key val line port
+  conf="$(cat "$H/templates/shoemaker.conf")"
+  for kv in "$@"; do
+    key="${kv%%=*}"; val="${kv#*=}"
+    [[ "$key" =~ ^[A-Z_]+$ ]] || die "bad KEY=VALUE: $kv"
+    grep -qE "^$key=" <<<"$conf" || die "shoemaker.conf has no key $key"
+    line="$key=$(dq "$val")"
+    conf="$(awk -v key="$key" -v line="$line" '
+      index($0, key "=") == 1 && match($0, /^[A-Z_]+=("[^"]*"|[^ \t#]*)/) { print line substr($0, RLENGTH + 1); next } { print }' <<<"$conf")"
+  done
+  port="$(free_port 6531)"
+  conf="${conf//\"__DASHBOARD_URL__\"/\"http://127.0.0.1:$port\"}"
+  # A given value also fills placeholders inside other values (UNIT="shoemaker-__PROJECT__").
+  for kv in "$@"; do key="${kv%%=*}"; val="${kv#*=}"; conf="${conf//__${key}__/$val}"; done
+  # Optional keys left unset become empty; required ones must be given.
+  for key in UMBRELLA GITLAB_API_HOST SETUP_CMD VERIFY_CMD; do conf="${conf//\"__${key}__\"/\"\"}"; done
+  local left; left="$(grep -oE '__[A-Z_]+__' <<<"$conf" | sort -u | tr '\n' ' ')"
+  [ -z "$left" ] || die "give these too (KEY=VALUE): $left"
+  # Check the settings before writing anything.
+  ( eval "$conf"
+    case "$HOST" in github|gitlab|none) ;; *) die "HOST must be github, gitlab or none" ;; esac
+    case "$GATE" in ci|local|none) ;; *) die "GATE must be ci, local or none" ;; esac
+    [ "$GATE" = local ] && [ -z "$VERIFY_CMD" ] && die "GATE=local needs a VERIFY_CMD"
+    git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "REPO=$REPO is not a git checkout"
+    git -C "$REPO" show-ref -q --verify "refs/heads/$DEFAULT_BRANCH" \
+      || git -C "$REPO" show-ref -q --verify "refs/remotes/$REMOTE/$DEFAULT_BRANCH" || die "no branch $DEFAULT_BRANCH in $REPO"
+  ) || exit 1
+
+  printf '%s\n' "$conf" >"$dir/shoemaker.conf"
+  # shellcheck disable=SC1091
+  . "$dir/shoemaker.conf"
+  local f
+  for f in DIRECTION.md RULES.md LEDGER.md; do [ -f "$dir/$f" ] || cp "$H/templates/$f" "$dir/$f"; done
+  mkdir -p "$dir"/{runs,worktrees,guard,systemd}
+  ( umask 077
+    jq -n --arg project "$PROJECT" --arg target "$REPO" --argjson port "$port" \
+      --arg password "$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 20)" \
+      --arg secret "$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" \
+      '{project: $project, target_dir: $target, host: "127.0.0.1", port: $port, password: $password, secret: $secret, base_path: ""}' >"$dir/dashboard.json" )
+  SHOEMAKER_STATE="$dir" node "$SHOEMAKER_HOME/dashboard/bin/queue.mjs" stats >/dev/null || die "could not create the queue in $dir"
+  R=( [PROJECT]="$PROJECT" [STATE]="$dir" [UNIT]="$UNIT" [DASHBOARD_URL]="$DASHBOARD_URL" [HOME]="$SHOEMAKER_HOME" )
+  render "$H/templates/README.md" "$dir/README.md"
+
+  # A state directory inside the repository stays out of git status, without touching tracked files.
+  case "$dir/" in "$REPO"/*)
+    local ex rel; ex="$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)/info/exclude"; rel="/${dir#"$REPO"/}/"
+    mkdir -p "$(dirname "$ex")"
+    grep -qxF "$rel" "$ex" 2>/dev/null || { echo "$rel" >>"$ex"; say "added $rel to $ex"; } ;;
+  esac
+  say "set up $dir for $PROJECT"
+  cat <<EOF
+
+Next:
+  1. Write the focus in $dir/DIRECTION.md, and the hard limits in $dir/RULES.md.
+  2. Check it:       shoemaker --state $(printf '%q' "$dir") doctor
+  3. Schedule it:    shoemaker --state $(printf '%q' "$dir") schedule "*-*-* 03:30:00"
+  4. Turn it on:     shoemaker --state $(printf '%q' "$dir") install
+  The dashboard will be at $DASHBOARD_URL; its password is in $dir/dashboard.json.
+EOF
+}
+
+cmd_schedule() {
+  find_state
+  local spec="" tz=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --timezone) tz="${2:-}"; shift 2 ;; -*) die "schedule: unknown option $1" ;; *) spec="$1"; shift ;; esac
+  done
+  [ -n "$spec" ] || die "usage: shoemaker schedule \"<OnCalendar spec>\" [--timezone Area/City]"
+  tz="${tz:-$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)}"
+  if command -v systemd-analyze >/dev/null; then
+    systemd-analyze calendar "$spec $tz" >/dev/null 2>&1 || die "systemd rejects the schedule '$spec $tz'"
+  fi
+  local pathdirs="" t d
+  for t in claude git jq gh glab node npm python3 flock timeout; do
+    d="$(dirname "$(command -v "$t" 2>/dev/null || echo /nonexistent/x)")"
+    [ -d "$d" ] && case ":$pathdirs:" in *":$d:"*) ;; *) pathdirs="${pathdirs:+$pathdirs:}$d" ;; esac
+  done
+  local build_seconds suggest_seconds round_seconds max_agents="${MAX_AGENTS:-16}"
+  case "$max_agents" in ""|*[!0-9]*) die "MAX_AGENTS must be a positive integer" ;; esac
+  [ "$max_agents" -ge 1 ] && [ "$max_agents" -le 128 ] || die "MAX_AGENTS must be from 1 to 128"
+  build_seconds="$(to_seconds "${TIMEOUT:-5h}")"; suggest_seconds="$(to_seconds "${SUGGEST_TIMEOUT:-1h}")"
+  round_seconds=$(( max_agents * (build_seconds > suggest_seconds ? build_seconds : suggest_seconds) + 3600 ))
+  R=( [PROJECT]="$PROJECT" [STATE]="$STATE" [HOME]="$SHOEMAKER_HOME" [DASHBOARD_URL]="$DASHBOARD_URL"
+      [PATH]="$pathdirs:/usr/local/bin:/usr/bin:/bin" [ONCALENDAR]="$spec $tz"
+      [TIMEOUT_START]="${round_seconds}s" )
+  mkdir -p "$STATE/systemd"
+  render "$H/templates/systemd/shoemaker.service" "$STATE/systemd/$UNIT.service"
+  render "$H/templates/systemd/shoemaker.timer" "$STATE/systemd/$UNIT.timer"
+  render "$H/templates/systemd/shoemaker-dashboard.service" "$STATE/systemd/$UNIT-dashboard.service"
+  say "wrote $STATE/systemd/$UNIT.{timer,service} and $UNIT-dashboard.service (schedule: $spec $tz)"
+  if [ -L "$HOME/.config/systemd/user/$UNIT.timer" ]; then
+    systemctl --user daemon-reload && systemctl --user restart "$UNIT.timer" && say "timer reloaded"
+    say "NOTE: restarting a timer whose new schedule has just passed a slot starts a round at once"
+  fi
+}
+
+cmd_install() {
+  find_state
+  local dash=1; [ "${1:-}" = --no-dashboard ] && dash=0
+  [ -f "$STATE/systemd/$UNIT.timer" ] || die "no units yet: shoemaker schedule \"<spec>\" first"
+  local u="$HOME/.config/systemd/user"; mkdir -p "$u"
+  ln -sf "$STATE/systemd/$UNIT.service" "$STATE/systemd/$UNIT.timer" "$u/"
+  [ "$dash" = 1 ] && ln -sf "$STATE/systemd/$UNIT-dashboard.service" "$u/"
+  systemctl --user daemon-reload || die "systemctl --user daemon-reload failed"
+  systemctl --user enable --now "$UNIT.timer" || die "could not enable $UNIT.timer"
+  if [ "$dash" = 1 ]; then
+    node_ok
+    # restart, not start: a dashboard already running may be another checkout's code
+    { systemctl --user enable "$UNIT-dashboard.service" && systemctl --user restart "$UNIT-dashboard.service"; } \
+      || die "could not start $UNIT-dashboard.service"
+    say "dashboard: $DASHBOARD_URL"
+  fi
+  systemctl --user list-timers "$UNIT.timer" --no-pager | sed -n '1,2p'
+  [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" = yes ] \
+    || say "NOTE: linger is off, so the timer stops while $USER is logged out (sudo loginctl enable-linger $USER)."
+}
+
+cmd_uninstall() {
+  find_state
+  systemctl --user disable --now "$UNIT.timer" "$UNIT-dashboard.service" 2>/dev/null || true
+  rm -f "$HOME/.config/systemd/user/$UNIT".{service,timer} "$HOME/.config/systemd/user/$UNIT-dashboard.service"
+  systemctl --user daemon-reload
+  say "$UNIT disabled and unlinked; $STATE is left as it was"
+}
+
+cmd_status() {
+  find_state
+
+  front() { awk -v k="$1" 'NR==1 && $0!="---"{exit} NR>1 && $0=="---"{exit}
+    NR>1 { sub(/#.*/, ""); if ($1 == k":") { $1=""; gsub(/^ +| +$/, ""); print; exit } }' "$STATE/DIRECTION.md"; }
+  echo "$PROJECT  ($REPO, $HOST, $DEFAULT_BRANCH)"
+  echo "  state:      $STATE"
+  # The units name the checkout they run, which need not be this one.
+  local home; home="$(sed -nE 's|^ExecStart="(.*)/bin/shoemaker" --state .* run$|\1|p' "$STATE/systemd/$UNIT.service" 2>/dev/null)"
+  if [ -z "$home" ] || [ "$home" = "$SHOEMAKER_HOME" ]; then
+    echo "  shoemaker:  $SHOEMAKER_HOME $(rev || echo '(not a git checkout)')"
+  else
+    echo "  shoemaker:  $home (the units run it; this command is $SHOEMAKER_HOME)"
+  fi
+  echo "  direction:  enabled $(front enabled), mode $(front mode), model $(front model | sed 's/^$/default/'), effort $(front effort | sed 's/^$/default/'), max_builds $(front max_builds)"
+  if systemctl --user cat "$UNIT.timer" >/dev/null 2>&1; then
+    echo "  timer:      $(systemctl --user is-active "$UNIT.timer"); next $(systemctl --user show "$UNIT.timer" -p NextElapseUSecRealtime --value | sed 's/^$/unknown/')"
+    echo "  round:      $(systemctl --user is-active "$UNIT.service")"
+    echo "  dashboard:  $(systemctl --user is-active "$UNIT-dashboard.service" 2>/dev/null) at $DASHBOARD_URL"
+  else
+    echo "  timer:      not installed (shoemaker schedule, then shoemaker install)"
+  fi
+  if [ -d "$SHOEMAKER_HOME/dashboard/node_modules" ]; then
+    echo "  queue:      $(node "$SHOEMAKER_HOME/dashboard/bin/queue.mjs" stats --json 2>/dev/null \
+      | jq -r '"\(.proposed) to review, \(.approved) approved (\(.ready) ready), \(.in_progress) in progress, \(.review) waiting for your merge, \(.failed) failed, \(.shipped) shipped"' 2>/dev/null)"
+  fi
+  echo "  rounds:"
+  find "$STATE/runs" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort | tail -n 5 \
+    | while read -r r; do printf '    %s  %s\n' "$r" "$(tail -n 1 "$STATE/runs/$r/run.log" 2>/dev/null | sed 's/^.*\]: //')"; done
+  [ -f "$STATE/runs/idle.log" ] && echo "    (+ $(wc -l <"$STATE/runs/idle.log") idle round(s) in runs/idle.log)"
+  return 0
+}
+
+cmd_update() {
+  local check=0
+  case "${1:-}" in --check) check=1 ;; "") ;; *) die "usage: shoemaker update [--check]" ;; esac
+  local g=(git -C "$SHOEMAKER_HOME") up old new f u s
+  rev >/dev/null || die "$SHOEMAKER_HOME is not a git checkout; install Shoemaker with git clone to update it"
+  up="$("${g[@]}" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" \
+    || die "$SHOEMAKER_HOME follows no upstream branch (pinned to a commit?); check out the version you want there"
+  "${g[@]}" fetch --quiet || die "git fetch failed in $SHOEMAKER_HOME"
+  old="$("${g[@]}" rev-parse HEAD)"; new="$("${g[@]}" rev-parse '@{u}')"
+
+  # The projects that run this checkout: installed round units whose ExecStart names it.
+  local -a units=() states=()
+  for f in "$HOME/.config/systemd/user"/*.service; do
+    [ -e "$f" ] || continue
+    s="$(awk -v p="ExecStart=\"$SHOEMAKER_HOME/bin/shoemaker\" --state \"" '
+      index($0, p) == 1 && / run$/ { s = substr($0, length(p) + 1); sub(/" run$/, "", s); print s; exit }' "$f")"
+    [ -n "$s" ] && [ -d "$s" ] && { units+=("$(basename "$f" .service)"); states+=("$s"); }
+  done
+
+  if [ "$old" = "$new" ]; then say "up to date with $up ($(rev))"; return 0; fi
+  "${g[@]}" merge-base --is-ancestor HEAD '@{u}' \
+    || die "$SHOEMAKER_HOME has commits that $up lacks; bring it up to date by hand"
+  echo "$up has $("${g[@]}" rev-list --count HEAD..'@{u}') new commit(s) for $SHOEMAKER_HOME:"
+  "${g[@]}" log --oneline --no-decorate HEAD..'@{u}' | sed 's/^/  /'
+  echo "projects that run it: ${units[*]:-none installed}"
+  [ "$check" = 1 ] && return 0
+  [ -z "$("${g[@]}" status --porcelain --untracked-files=no)" ] \
+    || die "$SHOEMAKER_HOME has local changes; commit or stash them first"
+
+  # Hold each project's round lock, so no round runs half on the old code and half on
+  # the new. A round due meanwhile finds the lock taken and exits, as for an overlap.
+  local i fd
+  for i in "${!states[@]}"; do
+    exec {fd}>"${states[$i]}/.lock"
+    flock -n "$fd" || die "a round of ${units[$i]} is running; update when it ends (systemctl --user status ${units[$i]})"
+  done
+  "${g[@]}" merge --ff-only --quiet '@{u}' || die "git merge --ff-only failed in $SHOEMAKER_HOME"
+  local changed; changed="$("${g[@]}" diff --name-only "$old" HEAD)"
+  if grep -qxE 'dashboard/package(-lock)?\.json' <<<"$changed" || [ ! -d "$SHOEMAKER_HOME/dashboard/node_modules" ]; then
+    say "the dashboard's dependencies changed: npm ci"
+    (cd "$SHOEMAKER_HOME/dashboard" && npm ci --no-audit --no-fund) \
+      || die "npm ci failed in $SHOEMAKER_HOME/dashboard. Fix it and restart the dashboards, or go back with: git -C $(printf '%q' "$SHOEMAKER_HOME") reset --hard $old"
+  fi
+  for u in "${units[@]}"; do
+    systemctl --user is-active --quiet "$u-dashboard.service" || continue
+    if systemctl --user restart "$u-dashboard.service"; then say "restarted $u-dashboard"
+    else say "WARNING: could not restart $u-dashboard.service"; fi
+  done
+  grep -q '^harness/templates/systemd/' <<<"$changed" \
+    && say "NOTE: the unit templates changed; run shoemaker schedule again for each project, with its schedule (OnCalendar= in its systemd/*.timer)"
+  say "updated $(rev "$old") → $(rev); each project's next round runs it (restart any dashboard you started by hand)"
+}
+
+cmd_login() {
+  find_state
+  case "$HOST" in
+    github) exec bash "$H/login/gh-login.sh" ;;
+    gitlab) exec bash "$H/login/glab-login.sh" ;;
+    *) say "HOST=none: there is nothing to log in to." ;;
+  esac
+}
+
+case "$cmd" in
+  detect) exec bash "$H/detect.sh" "$@" ;;
+  init) cmd_init "$@" ;;
+  schedule) cmd_schedule "$@" ;;
+  install) cmd_install "$@" ;;
+  uninstall) cmd_uninstall ;;
+  run) find_state; node_ok; exec bash "$H/run.sh" "$@" ;;
+  doctor) find_state; node_ok; exec bash "$H/run.sh" --dry-run "$@" ;;
+  status) cmd_status ;;
+  team)
+    find_state; node_ok
+    [ $# -gt 0 ] || set -- show
+    if [ "$1" = validate ] && [ $# -eq 2 ]; then set -- "$@" "${MAX_AGENTS:-16}"; fi
+    exec node "$SHOEMAKER_HOME/dashboard/bin/team.mjs" "$@" ;;
+  queue) find_state; node_ok; exec node "$SHOEMAKER_HOME/dashboard/bin/queue.mjs" "$@" ;;
+  dashboard) find_state; node_ok; cd "$SHOEMAKER_HOME/dashboard" && exec node src/server.js ;;
+  land) find_state; exec bash "$H/land.sh" "$@" ;;
+  login) cmd_login ;;
+  # exit at once: the update may have replaced this very file under bash
+  update) cmd_update "$@"; exit $? ;;
+  version|--version) r="$(rev)"; echo "shoemaker $VERSION${r:+ $r} ($SHOEMAKER_HOME)" ;;
+  "") usage 2 ;;
+  *) die "unknown command '$cmd' (shoemaker help)" ;;
+esac

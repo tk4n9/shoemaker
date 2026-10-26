@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# The other hooks a repository commonly uses (commit-msg, post-checkout, ...):
+# nothing to check here, so run the repository's own hook of the same name.
+. "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
+chain "$(basename "$0")" "$@"

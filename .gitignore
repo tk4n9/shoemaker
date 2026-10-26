@@ -1,0 +1,19 @@
+# Dependencies and local runtime data
+node_modules/
+dashboard/config.json
+dashboard/data/
+# A state directory created inside this checkout (when Shoemaker works on itself)
+/.shoemaker/
+
+# Logs, editors, OS
+*.log
+npm-debug.log*
+.DS_Store
+*.swp
+*~
+.vscode/
+.idea/
+
+# Agent tooling
+.claude/
+.omc/

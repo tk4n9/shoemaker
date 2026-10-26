@@ -1,0 +1,14 @@
+[Unit]
+Description=Shoemaker round for __PROJECT__: suggestions, and builds of approved items, landed through the merge gate
+Documentation=file://__STATE__/README.md
+
+[Service]
+Type=oneshot
+ExecStart="__HOME__/bin/shoemaker" --state "__STATE__" run
+WorkingDirectory=__STATE__
+Environment=PATH=__PATH__
+# The runner stops each agent at TIMEOUT (shoemaker.conf); this is only the backstop.
+TimeoutStartSec=__TIMEOUT_START__
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

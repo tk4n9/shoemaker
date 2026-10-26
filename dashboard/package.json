@@ -1,0 +1,21 @@
+{
+  "name": "shoemaker-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shoemaker's web dashboard and queue CLI: a suggestion agent proposes, you approve, an implementation agent builds",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "init-db": "node src/db.js --init",
+    "test": "node --test",
+    "check": "node scripts/check.mjs",
+    "new:page": "node scripts/new-page.mjs",
+    "queue": "node bin/queue.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0"
+  }
+}

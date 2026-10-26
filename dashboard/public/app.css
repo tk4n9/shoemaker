@@ -1,0 +1,439 @@
+/* Seam. The shoemaker's bench by day, the elves' night shift in dark mode.
+   - Each page is one sheet on a backdrop. Lists and facts inside it are
+     ledgers: bordered tables, one line per row, one value per cell.
+   - All text is ink at one size (headings a step up); grey only draws lines.
+   - The one thread colour means "your turn": the number tag of an item that
+     waits for you, and nothing else is yellow.
+   - Things you press are boxes with a hard 2px shadow. Every corner is square.
+   - The seam of five stitches (idea, approved, building, your merge, shipped)
+     marks where an item stands on its own page, and the current page in the nav. */
+
+/* Atkinson Hyperlegible Next and Mono (SIL OFL 1.1, see fonts/), served by the
+   dashboard itself rather than a font service. */
+@font-face {
+  font-family: "Atkinson Hyperlegible Next"; font-style: normal; font-weight: 400 600; font-display: swap;
+  src: url("fonts/atkinson-hyperlegible-next-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible Next"; font-style: normal; font-weight: 400 600; font-display: swap;
+  src: url("fonts/atkinson-hyperlegible-next-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible Mono"; font-style: normal; font-weight: 400 600; font-display: swap;
+  src: url("fonts/atkinson-hyperlegible-mono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible Mono"; font-style: normal; font-weight: 400 600; font-display: swap;
+  src: url("fonts/atkinson-hyperlegible-mono-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+:root {
+  --backdrop: #ecedf2;    /* around the sheet */
+  --edge: #cfd1db;        /* the sheet's border */
+  --canvas: #ffffff;      /* the sheet */
+  --surface: #ffffff;
+  --ink: #1b1d29;
+  --muted: #5b5e71;
+  --rule: #e3e4eb;        /* hairlines inside a table */
+  --stitch: #b9bccb;      /* table borders; stitches not sewn yet */
+  --field: #8a8da1;       /* control outlines, 3:1 on canvas */
+  --press: #b3b6c6;       /* the shadow of things you press */
+  --thread: #f5c431;      /* your turn */
+  --thread-ink: #1b1d29;
+  --thread-soft: #fff3c4;
+  --font: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "Atkinson Hyperlegible Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --fs: 14px;
+  --fs-l: 18px;
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  --backdrop: #0d0e14;
+  --edge: #2e3142;
+  --canvas: #161923;
+  --surface: #1d202d;
+  --ink: #e7e8ef;
+  --muted: #9b9eb3;
+  --rule: #2a2d3b;
+  --stitch: #4a4e63;
+  --field: #70748c;
+  --press: #3a3e52;       /* a lighter edge: a dark shadow would vanish here */
+  --thread: #f2c230;
+  --thread-ink: #14161f;
+  --thread-soft: #3a3320;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }   /* beat display:grid/flex on hidden panels */
+html { background: var(--backdrop); }
+/* The body is the sheet: nav and page share one bordered column. The
+   alignment setting moves the whole sheet. */
+body {
+  max-width: 980px;
+  margin: 24px auto;
+  border: 1px solid var(--edge);
+  font: var(--fs)/1.5 var(--font);
+  background: var(--canvas);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+@media (min-width: 1029px) {
+  body:has(> .container.align-left) { margin-left: 24px; }
+  body:has(> .container.align-right) { margin-right: 24px; }
+  body:has(> .container.align-fit) { max-width: none; margin-inline: 24px; }
+}
+body:has(> .container > .login) { max-width: none; margin: 0; border: 0; background: none; }
+.container { padding: 24px 24px 56px; }
+a { color: var(--ink); text-underline-offset: 3px; }
+code { font-family: var(--mono); font-size: 0.9em; }
+h1 { font-size: var(--fs-l); font-weight: 600; margin: 8px 0 20px; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* App nav: wordmark, the pages as buttons, page-wide controls. */
+.appnav {
+  display: flex; align-items: center; gap: 20px;
+  padding: 12px 24px; border-bottom: 1px solid var(--rule); background: var(--canvas);
+}
+.brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; text-decoration: none; letter-spacing: -0.01em; }
+.brand .seam i { width: 6px; }
+.nav-links { display: flex; gap: 10px; flex: 1; }
+.nav-links a {
+  min-width: 7.5rem; padding: 5px 12px; text-align: center; text-decoration: none;
+  border: 1px solid var(--field); background: var(--surface);
+}
+.nav-links a:hover { border-color: var(--ink); }
+/* The current page: bold, and led by the stitch being sewn now. */
+.nav-links a.active { font-weight: 600; border-color: var(--ink); }
+.nav-links a.active::before {
+  content: ''; display: inline-block; width: 9px; height: 3px; margin-right: 8px; vertical-align: middle;
+  background: var(--ink); transform: skewX(-28deg);
+}
+.nav-controls { display: flex; align-items: center; gap: 2px; }
+
+/* Controls */
+input, textarea, select, button { font: inherit; color: var(--ink); }
+input, textarea, select {
+  padding: 5px 9px; border: 1px solid var(--field); border-radius: 0; background: var(--surface);
+}
+button {
+  font-size: 14px; padding: 5px 12px; cursor: pointer;
+  border: 1px solid var(--field); border-radius: 0; background: var(--surface);
+}
+button:hover { border-color: var(--ink); }
+button:disabled { opacity: 0.5; cursor: default; }
+/* One filled button per decision: Approve, Retry, and the forms' own submit. */
+button.primary, .ask-ok, #save-explanation, #team-form button[type="submit"], .add-comment button {
+  background: var(--ink); color: var(--canvas); border-color: var(--ink); font-weight: 600;
+}
+button.primary:hover, .ask-ok:hover { background: var(--muted); border-color: var(--muted); }
+/* Reject, Remove, Delete: a quiet word; the dialog asks before anything is lost.
+   Beside other decisions (a queue row, an item's page) Reject is a button. */
+button.danger {
+  background: transparent; border-color: transparent; color: var(--muted);
+  text-decoration: underline; text-underline-offset: 3px; padding-inline: 6px;
+}
+button.danger:hover { color: var(--ink); }
+.item-actions button.danger { border-color: var(--field); color: var(--ink); text-decoration: none; background: var(--surface); }
+.icon-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; padding: 0; border: 0; background: transparent; color: var(--muted);
+}
+.icon-toggle:hover { color: var(--ink); }
+.icon-toggle.active { color: var(--ink); }
+/* Things you press cast a hard shadow, and pressing moves them into it.
+   Controls drawn as words, icons or switches cast none. */
+button, .btn, .seg, .nav-links a { box-shadow: 2px 2px 0 var(--press); }
+.icon-toggle, .approval-switch, .seg-btn, .md-tabs .tab, button.danger { box-shadow: none; }
+.item-actions button.danger { box-shadow: 2px 2px 0 var(--press); }
+button:not(.icon-toggle, .approval-switch, .seg-btn, .tab):active, .btn:active, .nav-links a:active {
+  transform: translate(2px, 2px); box-shadow: none;
+}
+
+/* Number tags and the seam. */
+.tag {
+  font-family: var(--mono); font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums;
+  border: 1px dotted var(--field); padding: 0 4px;
+}
+.tag.yours { background: var(--thread-soft); border: 1px solid var(--thread); }
+.seam { display: inline-flex; gap: 3px; transform: skewX(-28deg); vertical-align: middle; }
+.seam i { display: block; width: 9px; height: 3px; background: var(--stitch); }
+.seam i.done, .seam i.now { background: var(--ink); }
+.seam.yours i.now { background: var(--thread); box-shadow: 0 0 0 1px var(--ink); }
+.seam i.cut { background: linear-gradient(90deg, var(--ink) 0 30%, transparent 30% 70%, var(--ink) 70%); }
+.item-state { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.st-archived .seam i { background: var(--stitch); }
+.state { color: var(--muted); white-space: nowrap; }
+.state.yours { color: var(--ink); font-weight: 600; }
+
+/* Todos header */
+.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 4px 0 8px; }
+.project-name {
+  flex: 1 1 200px; min-width: 0; font-size: var(--fs-l); font-weight: 600;
+  border: 1px solid transparent; background: transparent; padding: 2px 6px; margin-left: -7px;
+}
+.project-name:hover, .project-name:focus { border-color: var(--field); outline: none; }
+.settings { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.seg { display: inline-flex; }
+.seg-btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; }
+.seg-btn + .seg-btn { border-left: none; }
+.seg-btn.active { background: var(--ink); color: var(--canvas); border-color: var(--ink); }
+.approval-switch { display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 4px 0; color: var(--muted); }
+.approval-switch .switch-track {
+  display: inline-flex; align-items: center; width: 30px; height: 18px; padding: 2px;
+  border: 1px solid var(--field); background: var(--surface);
+}
+.approval-switch .switch-track::before { content: ''; width: 12px; height: 12px; background: var(--field); }
+.approval-switch[aria-checked="true"] { color: var(--ink); }
+.approval-switch[aria-checked="true"] .switch-track { justify-content: flex-end; background: var(--ink); border-color: var(--ink); }
+.approval-switch[aria-checked="true"] .switch-track::before { background: var(--canvas); }
+
+.next-line { margin: 0 0 16px; }
+.next-line strong { font-weight: 600; }
+.toolbar { margin-bottom: 28px; }
+.add-form { display: flex; flex-wrap: wrap; gap: 8px; }
+.add-form input { flex: 1 1 240px; min-width: 0; }
+
+/* Queue sections: a heading over a dashed rule, a line of help, then a ledger. */
+.queue-section { margin: 0 0 36px; }
+.queue-section > h2, .queue-section summary h2 {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: var(--fs); font-weight: 600; margin: 0; background: var(--canvas);
+  position: sticky; top: 0; z-index: 2;
+}
+.queue-section > h2 { padding: 0 0 4px; margin-bottom: 6px; border-bottom: 1px dashed var(--ink); }
+.count { font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+.queue-section > h2 .count { color: var(--ink); font-weight: 600; }
+.queue-section > h2 .count::before { content: '('; }
+.queue-section > h2 .count::after { content: ')'; }
+.queue-section h2 .more { margin-left: auto; font-weight: 400; color: var(--muted); text-decoration: none; }
+.queue-section h2 .more:hover { color: var(--ink); text-decoration: underline; }
+.queue-section .hint { color: var(--ink); margin: 0 0 10px; }
+details.queue-section summary { cursor: pointer; list-style: none; }
+details.queue-section summary::-webkit-details-marker { display: none; }
+details.queue-section summary h2 { padding: 8px 0 6px; border-bottom: 1px solid var(--rule); color: var(--muted); position: static; }
+details.queue-section summary h2::before { content: '▸'; }
+details.queue-section[open] summary h2::before { content: '▾'; }
+
+/* A ledger row: # | status | title | priority | decision, on one line. A
+   brief list (the dashboard's) keeps the first three. Hairlines split the
+   columns, so every row lines up with the header row. */
+.item-list { list-style: none; padding: 0; margin: 0; border: 1px solid var(--stitch); background: var(--canvas); }
+.item-list > li.empty { padding: 10px; }
+.item-list > li.cols, .queue-section .item {
+  display: grid; grid-template-columns: 3.75rem 6.75rem minmax(0, 1fr) 8.5rem 10rem; line-height: 20px;
+}
+.item-list.brief > li.cols, .item-list.brief > .item { grid-template-columns: 3.75rem 6.75rem minmax(0, 1fr); }
+.item-list > li.cols { font-weight: 600; border-bottom: 1px solid var(--ink); }
+.queue-section .item { align-items: stretch; border-bottom: 1px solid var(--rule); }
+.queue-section .item:last-child { border-bottom: 0; }
+.item-list > li.cols > *, .queue-section .item > * { padding: 3px 8px; border-left: 1px solid var(--rule); }
+.item-list > li.cols > :first-child, .queue-section .item > :first-child { border-left: 0; }
+.item-status { white-space: nowrap; }
+.item-body { min-width: 0; }
+.item .title { text-decoration: none; overflow-wrap: anywhere; }
+.item .title:hover { text-decoration: underline; }
+.pr { font-family: var(--mono); color: var(--muted); }
+.queue-section .item .pr { color: var(--ink); margin-left: 6px; }
+/* The priority picker reads as plain text with a small chevron, so picked and
+   fixed priorities start on the same edge. */
+.item-prio select {
+  appearance: none; -webkit-appearance: none; height: 20px; width: 100%;
+  padding: 0 14px 0 0; border: 0; color: var(--ink); cursor: pointer;
+  background: linear-gradient(45deg, transparent 50%, var(--ink) 50%) right 5px center / 4px 4px no-repeat,
+              linear-gradient(135deg, var(--ink) 50%, transparent 50%) right 1px center / 4px 4px no-repeat;
+}
+/* Decisions share one width; a lone one ("Open #PR") takes the whole cell. */
+.queue-section .item-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; align-content: start; }
+.queue-section .item-actions button, .queue-section .item-actions .btn {
+  width: 100%; height: 20px; padding: 0; font-size: 13px; line-height: 18px;
+}
+.queue-section .item-actions .btn {
+  grid-column: 1 / -1; display: block; text-align: center; text-decoration: none; border: 1px solid var(--field);
+}
+.queue-section .item-actions .btn:hover { border-color: var(--ink); }
+.queue-section .item-actions:has(> .pr) { display: block; }
+.queue-section .item-actions:empty::before { content: '—'; color: var(--muted); grid-column: 1 / -1; text-align: center; }
+.chip {
+  font-family: var(--mono); text-decoration: none; color: var(--ink);
+  border-bottom: 1px solid var(--field); white-space: nowrap;
+}
+.chip:hover { border-bottom-color: var(--ink); }
+.chip.st-shipped { color: var(--muted); }
+.chip.st-archived { color: var(--muted); text-decoration: line-through; }
+.muted, .empty { color: var(--muted); }
+.status { color: var(--muted); }
+.status.ok { color: var(--ink); font-weight: 600; }
+
+/* The page's own confirm/prompt (app.js ask()). */
+dialog.ask {
+  border: 1px solid var(--rule); border-radius: 0; background: var(--surface); color: var(--ink);
+  padding: 18px; width: min(480px, calc(100vw - 32px)); box-shadow: 0 12px 40px rgb(0 0 0 / 0.18);
+}
+dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
+.ask-text { margin: 0 0 12px; white-space: pre-line; }
+.ask-input { width: 100%; }
+.ask-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+
+/* Item page: the same tag and buttons as the lists, then the facts as a ledger. */
+.back { color: var(--muted); text-decoration: none; }
+.back:hover { color: var(--ink); text-decoration: underline; }
+.detail-title {
+  width: 100%; font-size: var(--fs-l); font-weight: 600; line-height: 1.3; margin: 4px 0 10px; margin-left: -7px;
+  border: 1px solid transparent; background: transparent; padding: 2px 6px;
+  display: block; resize: none; overflow: hidden;   /* a textarea, so a long title wraps */
+  field-sizing: content;                            /* and grows to fit before app.js runs */
+}
+.detail-title:hover, .detail-title:focus { border-color: var(--field); outline: none; }
+.card { margin: 0 0 32px; }
+.card > h2 { font-size: var(--fs); font-weight: 600; margin: 0 0 12px; padding-bottom: 6px; border-bottom: 2px solid var(--ink); }
+.item-card { display: grid; gap: 12px; padding-bottom: 20px; border-bottom: 1px solid var(--rule); }
+.status-line { margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); }
+.item-card .item-actions { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.item-card .item-actions button { padding: 3px 12px; }
+.item-main { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.item-note { margin: 0; color: var(--muted); }
+.item-note code { color: var(--ink); }
+.facts {
+  display: grid; grid-template-columns: max-content 1fr; margin: 0;
+  border: 1px solid var(--stitch); background: var(--canvas);
+}
+.facts dt, .facts dd { padding: 6px 10px; border-bottom: 1px solid var(--rule); }
+.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; border-left: 1px solid var(--rule); }
+.facts dt:last-of-type, .facts dd:last-of-type { border-bottom: 0; }
+.deps-form { display: flex; gap: 6px; margin-top: 6px; align-items: center; flex-wrap: wrap; }
+.deps-form input { flex: 0 1 220px; min-width: 0; padding: 2px 8px; }
+.deps-form button { padding: 2px 10px; }
+.explanation { width: 100%; resize: vertical; font-family: var(--mono); font-size: 14px; }
+.row { display: flex; gap: 12px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.md-tabs { display: flex; gap: 18px; margin-bottom: 10px; }
+.md-tabs .tab { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 2px 0; color: var(--muted); }
+.md-tabs .tab.active { color: var(--ink); border-bottom-color: var(--ink); }
+.preview.md-body { min-height: 120px; max-width: 68ch; }
+.md-body h1, .md-body h2, .md-body h3 { font-size: var(--fs); }
+.preview pre.plain { margin: 0; white-space: pre-wrap; font: inherit; }
+.md-body pre { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); padding: 10px; }
+.md-body code { background: var(--surface); border: 1px solid var(--rule); padding: 0 3px; }
+.md-body pre code { border: 0; padding: 0; }
+.error { color: var(--ink); background: var(--thread-soft); border-left: 3px solid var(--thread); padding: 6px 10px; }
+
+/* Graph: the same rule, whose turn it is decides the fill. */
+.graph-legend { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0; padding: 0; color: var(--muted); }
+.graph-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.key { display: inline-block; width: 22px; height: 12px; border: 1.5px solid var(--field); background: var(--surface); }
+.key.st-proposed { background: var(--thread); border-color: var(--ink); }
+.key.st-in_progress { border: 2px solid var(--ink); }
+.key.st-shipped { background: var(--rule); border-color: var(--rule); }
+.key.st-archived { border-style: dotted; }
+.key-arrow { font-weight: 600; }
+.graph-wrap { overflow-x: auto; border-top: 2px solid var(--ink); padding: 12px 0; margin-bottom: 16px; }
+.graph-svg { display: block; }
+.g-node { text-decoration: none; }
+.g-node rect { fill: var(--surface); stroke: var(--field); stroke-width: 1.5; }
+.g-node text { fill: var(--ink); font: 13px var(--font); }
+.g-node .g-meta { font-size: 11px; fill: var(--muted); }
+.g-node.st-proposed rect, .g-node.st-review rect, .g-node.st-failed rect { fill: var(--thread); stroke: var(--ink); }
+.g-node.st-proposed text, .g-node.st-review text, .g-node.st-failed text { fill: var(--thread-ink); }
+.g-node.next rect, .g-node.st-in_progress rect { stroke: var(--ink); stroke-width: 2.5; }
+.g-node.st-archived rect { stroke-dasharray: 1.5 3; }
+.g-node.st-archived text, .g-node.st-shipped text { fill: var(--muted); }
+.g-node.st-shipped rect { fill: var(--rule); stroke: var(--rule); }
+.g-node:hover rect, .g-node:focus rect { stroke: var(--ink); stroke-width: 2.5; }
+.g-node:focus { outline: none; }
+.g-edge { fill: none; stroke: var(--ink); stroke-width: 1.4; }
+.g-edge.met { stroke: var(--stitch); stroke-dasharray: 4 3; }
+.g-head { fill: var(--ink); }
+.g-head.met { fill: var(--stitch); }
+.loose-title { font-size: var(--fs); font-weight: 600; margin: 0 0 6px; }
+.loose-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.loose-list a:not(.chip) { text-decoration: none; }
+.loose-list a:not(.chip):hover { text-decoration: underline; }
+
+/* Log */
+.comment-list { list-style: none; margin: 0 0 12px; padding: 0; }
+.comment { border-bottom: 1px solid var(--rule); padding: 8px 0; }
+.comment-meta { display: flex; justify-content: space-between; align-items: center; }
+.comment-edit {
+  width: 100%; resize: vertical; font: inherit; color: var(--ink);
+  background: transparent; border: 1px solid transparent; padding: 2px 6px; margin-left: -7px;
+}
+.comment-edit:hover, .comment-edit:focus { border-color: var(--field); outline: none; background: var(--surface); }
+.comment-delete { padding: 0 6px; font-size: 12px; }
+.add-comment { display: grid; gap: 8px; justify-items: start; }
+.add-comment textarea { width: 100%; resize: vertical; }
+
+/* Dashboard: the standing facts, then the same ledgers as Todos, then the log. */
+.dash-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin: 4px 0 6px; }
+.facts.overnight { margin: 0 0 32px; }
+.log-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--stitch); background: var(--canvas); }
+.log-list li { display: grid; grid-template-columns: 13rem minmax(0, 1fr); border-bottom: 1px solid var(--rule); }
+.log-list li:last-child { border-bottom: 0; }
+.log-list li > * { padding: 7px 10px; }
+.log-list li > * + * { border-left: 1px solid var(--rule); }
+
+/* Team page: role rows use the same rules, without the queue grid. */
+#team-page .item { padding: 12px 0; border-bottom: 1px solid var(--rule); display: grid; gap: 8px; }
+#team-page label { display: grid; gap: 4px; color: var(--muted); }
+#team-page .row label { display: inline-grid; }
+#team-page ol { padding-left: 20px; }
+
+/* Login */
+.login { max-width: 320px; margin: 96px auto; text-align: center; border: 1px solid var(--rule); background: var(--surface); padding: 28px 24px; }
+.login h1 { margin: 0; }
+.login form { display: grid; gap: 12px; margin-top: 16px; }
+
+@media (max-width: 1028px) {
+  body { margin-inline: 16px; }
+}
+/* Phones: the sheet becomes the screen, and every control a finger can hit. */
+@media (max-width: 640px) {
+  html { background: var(--canvas); }
+  body { max-width: none; margin: 0; border: 0; }
+  .container { padding-inline: 16px; }
+  /* The nav: wordmark and controls, then the page buttons on a row of their own. */
+  .appnav {
+    display: grid; grid-template-columns: 1fr auto; grid-template-areas: "brand controls" "links links";
+    gap: 10px 0; padding: 10px 16px 14px;
+  }
+  .brand { grid-area: brand; }
+  .nav-controls { grid-area: controls; }
+  .nav-links { grid-area: links; gap: 8px; }
+  .nav-links a { min-width: 6.5rem; padding: 9px 10px; }
+  button, input:not([type="checkbox"]):not([type="radio"]), select, .seg-btn { min-height: 40px; }
+  .add-form input { flex: 1 1 100%; }
+  .add-form select { flex: 0 0 auto; }
+  .add-form button { flex: 1 1 auto; }
+  /* Ledger rows keep the number column; beside it the row stacks: the title,
+     then status · priority, then the decisions as two full-size buttons. */
+  .item-list > li.cols { display: none; }
+  .queue-section .item, .item-list.brief > .item {
+    grid-template-columns: 3.5rem auto minmax(0, 1fr); align-items: baseline;
+  }
+  .queue-section .item > * { padding: 0 12px; border-left: 0; }
+  .queue-section .item > .item-id {
+    grid-column: 1; grid-row: 1 / span 3; align-self: stretch;
+    padding: 10px 0 10px 8px; border-right: 1px solid var(--rule);
+  }
+  .queue-section .item > .item-body { grid-column: 2 / -1; grid-row: 1; padding-top: 9px; }
+  .queue-section .item > .item-status { grid-column: 2; grid-row: 2; padding: 2px 0 10px 12px; }
+  .queue-section .item > .item-prio { grid-column: 3; grid-row: 2; padding: 2px 12px 10px 0; }
+  .queue-section .item > .item-prio::before { content: '·'; margin: 0 8px; }
+  .queue-section .item > .item-actions { grid-column: 2 / -1; grid-row: 3; padding-bottom: 12px; gap: 8px; }
+  .queue-section .item-actions:empty { display: none; }
+  .queue-section .item-actions button, .queue-section .item-actions .btn { height: 40px; font-size: var(--fs); line-height: 38px; }
+  /* The picker keeps its text size but gets a finger-sized hit area. */
+  .item-prio select { width: auto; height: auto; min-height: 0; padding-block: 10px; margin-block: -10px; }
+  /* Shipped rows: the pull request takes the priority's place. */
+  .queue-section .item.st-shipped > .item-prio { display: none; }
+  .queue-section .item.st-shipped > .item-actions { grid-column: 3; grid-row: 2; padding: 2px 12px 10px 0; }
+  .queue-section .item.st-shipped > .item-actions::before { content: '·'; margin: 0 8px; }
+  .queue-section .item.st-shipped > .item-actions .pr { margin-left: 0; }
+  .facts { grid-template-columns: 7.5rem minmax(0, 1fr); }
+  .facts dt, .facts dd { padding: 7px 10px; }
+  .log-list li { grid-template-columns: 1fr; }
+  .log-list li > * + * { border-left: 0; padding-top: 0; }
+}

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# pre-commit (Shoemaker worktree): refuse a commit on the default branch, or any
+# commit by the read-only suggestion agent, then run the repository's own hook.
+. "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
+
+if [ "$role" != build ]; then
+  echo "shoemaker guard: non-build agents change nothing in the repository; add ideas with shoemaker queue add." >&2
+  exit 1
+fi
+if [ "$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" = "$DEFAULT_BRANCH" ]; then
+  echo "shoemaker guard: refusing to commit on $DEFAULT_BRANCH. Work on your build branch." >&2
+  exit 1
+fi
+
+chain pre-commit "$@"

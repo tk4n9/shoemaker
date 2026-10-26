@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# pre-push (Shoemaker worktree): refuse any push that updates or deletes the default
+# branch, or any push by non-build agents, then run the repository's own hook.
+. "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
+
+[ "$role" != build ] && { echo "shoemaker guard: non-build agents push nothing." >&2; exit 1; }
+input="$(cat)"
+while read -r _lref _lsha rref _rsha; do
+  [ -n "$rref" ] || continue
+  if [ "$rref" = "refs/heads/$DEFAULT_BRANCH" ]; then
+    echo "shoemaker guard: refusing to push to $DEFAULT_BRANCH. Publish your build branch with shoemaker land." >&2
+    exit 1
+  fi
+done <<<"$input"
+
+chain pre-push "$@" <<<"$input"

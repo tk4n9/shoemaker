@@ -1,0 +1,15 @@
+[Unit]
+Description=Shoemaker dashboard for __PROJECT__: the approval queue (__DASHBOARD_URL__)
+Documentation=file://__STATE__/README.md
+
+[Service]
+Type=simple
+ExecStart="__HOME__/bin/shoemaker" --state "__STATE__" dashboard
+WorkingDirectory=__STATE__
+Environment=PATH=__PATH__
+Environment=NODE_ENV=production
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
