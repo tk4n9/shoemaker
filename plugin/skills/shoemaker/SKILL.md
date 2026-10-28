@@ -25,7 +25,7 @@ Shoemaker gives a repository scheduled agents and a queue that the human
 controls:
 
 ```text
-systemd timer → shoemaker run: lock, preflight, reconcile merged PRs
+systemd timer → shoemaker run: lock, apply waiting notes/team changes, preflight, reconcile merged PRs
    ├─ suggestion agent      (while fewer than max_waiting ideas wait for review)
    │    DIRECTION.md + the code → shoemaker queue add … (spec, prerequisites)
    ├─ the human             approves (with a priority) or rejects, on the dashboard
@@ -42,11 +42,17 @@ The code is installed once. Each project gets a **state directory** with:
 - the agents' records;
 - their worktrees.
 
-The default pair can be replaced with a confirmed team from the dashboard's
-**Team** page: role names, counts and natural-language descriptions become
-ordered stages with `propose`, `review`, `build` or `report` capabilities.
-The interpretation is only a preview until the user confirms it. Read
-`<home>/docs/team.md` before helping to configure one.
+The dashboard's **Team** page starts with the default team: one Suggestion
+agent and `max_builds` Implementation agents. Add, edit or remove roles;
+saved changes wait for the next round, which interprets and validates them
+as ordered stages with `propose`, `review`, `build` or `report` capabilities.
+That round uses the new team. Read `<home>/docs/team.md` before helping to
+configure one.
+
+On **Direction**, the human's rough notes become goals in `DIRECTION.md`'s
+`## Focus` section at the next round. Direction notes are interpreted before
+team changes, using the same tool-free interpreter. Read
+`<home>/docs/direction.md` before helping to manage notes and goals.
 
 The **Auto approval** switch on Todos is separate from a team's authority
 and off by default. Only the dashboard changes it; do not edit `queue.db`
@@ -217,8 +223,8 @@ If the project keeps a status log, append an entry. Then tell the user:
 
 - the dashboard URL, and that its password is in `<dir>/dashboard.json`. Do
   not print the password.
-- how to steer: `DIRECTION.md`, `RULES.md`, and the README in the state
-  directory;
+- how to steer: the Direction and Team pages, `DIRECTION.md`, `RULES.md`,
+  and the README in the state directory;
 - the schedule and the next round;
 - what is still pending (login, CI, identity);
 - how to pause it (`enabled: false`).
@@ -229,10 +235,21 @@ one change to the repository.
 
 ## Adjusting
 
-- **Mode, model, effort, focus, limits on counts:** edit the `DIRECTION.md`
+- **Mode, model, effort, limits on counts:** edit the `DIRECTION.md`
   front matter. This takes effect from the next round. An active team's
   total `build` count replaces `max_builds`; all proposers still share
   `max_waiting` and `per_round`.
+- **Focus and goals:** use the dashboard's **Direction** page. Notes wait
+  for the next real round, which interprets them with the current goals
+  and writes a validated goal list into `DIRECTION.md`'s `## Focus`. Notes
+  can add, reword, merge or remove goals. Keep a goal by leaving it there;
+  **Remove** takes it out immediately, so new work on that topic stops from
+  the next round. Existing queue items remain until the human rejects them.
+  Waiting notes can be deleted before the round reads them. Direct edits
+  to Focus still work; untouched bullets stay verbatim, and an edit made
+  while notes are being read takes precedence. A failed interpretation
+  preserves Focus and leaves the notes waiting with the reason. Paused
+  rounds leave notes waiting; a dry run only reports them.
 - **Auto approval:** use the switch in the Todos header. Manual approval is
   the default, and changes take effect next round. The approver runs in
   parallel from round start against the ideas waiting then, using existing
@@ -255,34 +272,49 @@ one change to the repository.
     way. Without a team, suggestion and approval each reserve a slot before
     builds; suggestion takes precedence if only one slot is available. An
     approver with work prevents a round from being idle.
-- **Team roles and counts:** use the dashboard's **Team** page. Add a name,
-  count and description per role, then Apply. The headless interpreter has
-  no tools and returns a proposed config for server validation. Inspect the
-  preview's stages, counts, capabilities, authority and instructions with
-  the user; Confirm makes it active for following rounds, and Discard
-  leaves the active team unchanged. Do not hand-write or activate a config
-  to skip the user's preview decision.
+- **Team roles and counts:** use the dashboard's **Team** page. The **Add a
+  role** form adds a name, count and description. Use **Edit** and **Remove**
+  on rows in **Active team**; **Undo** and **Undo all** cancel waiting changes.
+  Saved changes are marked on their rows and kept in `team/pending.json`.
+  Saving starts no agent. At the next real round, after Direction notes,
+  the tool-free interpreter returns a config for validation and atomic
+  activation before that round's team snapshot. A failed interpretation
+  keeps the current team and leaves changes waiting with a reason. A round
+  already running keeps its snapshot. Do not hand-write or activate a
+  config to bypass the human's saved changes and the runner's validation.
+  - The default team has Suggestion ×1 and Implementation × `max_builds`.
+    Built-in roles keep `SUGGEST.md` / `IMPLEMENT.md`, their respective
+    `propose` / `build` capability and advisory authority. Their descriptions
+    add focus to those protocols. Suggestion must keep count 1; add another
+    proposing role for more workers. Removing a role removes its agents
+    from future rounds. Returning to exactly the default rows removes
+    `team/active.json` and restores the standard flow without interpretation.
   - Reviewer authority defaults to `advisory`. Explain any requested
     `filter` (majority rejection screens out an idea) or `approve`
-    (unanimous approval permits building) authority before confirmation.
-    Both decisions remain visible in the queue with their reasons.
+    (unanimous approval permits building) authority before saving it, and
+    put the requested authority explicitly in the role's description.
+    **Instructions** shows the interpreted role after application; check
+    its capabilities and authority on the page. Decisions remain visible
+    in the queue with their reasons.
   - Roles inherit `DIRECTION.md`'s `model` and `effort` unless their
     descriptions request an override. `suggest_model` and `suggest_effort`
-    apply only to the default suggestion agent without a team.
+    apply to the default Suggestion agent and a team's built-in Suggestion.
   - Set `apply_model` and `apply_effort` in `DIRECTION.md` to override only
-    the interpreter. Empty or absent values fall back to `model` / `effort`,
-    then the Claude Code default. `apply_effort` accepts `low`, `medium`,
-    `high`, `xhigh` or `max`; model values pass through as given. The Team
-    status and `team/interpretation.json` record the model and effort used,
-    or `default` when no flag was supplied.
+    the shared Team and Direction interpreter. Empty or absent values fall
+    back to `model` / `effort`, then the Claude Code default. `apply_effort`
+    accepts `low`, `medium`, `high`, `xhigh` or `max`; model values pass
+    through as given. `team/last-apply.json` and `direction/last-apply.json`
+    record each application's status, model and effort used, or `default`
+    when no flag was supplied.
 - **Hard limits and conventions:** edit `RULES.md`.
 - **Host, gate, commands, timeouts, total agent cap:** edit `shoemaker.conf`.
   `MAX_AGENTS` defaults to 16 when absent, including in older state
-  directories after an update. `APPLY_TIMEOUT` limits team interpretation
-  and defaults to `5m` when absent. It accepts positive integers with `h`,
-  `m` or `s`, or bare seconds, like the worker timeouts. Invalid
-  `apply_effort` or `APPLY_TIMEOUT` rejects Apply before starting a session
-  and leaves the active team unchanged.
+  directories after an update. `APPLY_TIMEOUT` limits each Team or Direction
+  interpretation and defaults to `5m` when absent. It accepts positive
+  integers with `h`, `m` or `s`, or bare seconds, like the worker timeouts.
+  Invalid `apply_effort` or `APPLY_TIMEOUT` prevents interpretation from
+  starting; the current team or Focus stays unchanged and saved changes
+  remain waiting.
 - **Schedule:** run `shoemaker schedule "<spec>" --timezone <tz>`. It reloads
   an installed timer. Restarting a timer whose new schedule has just passed a
   slot starts a round at once.
@@ -315,16 +347,22 @@ and their fixes. The usual causes for rounds that build nothing:
 - no host login;
 - no Git identity.
 
-For team interpretation failures, read the latest status on the Team page
-and the logs under the state's `team/` directory. A timeout, invalid output
-or failed Apply never replaces the active team. A second Apply is refused
-while one is running. Check `MAX_AGENTS` if a proposed or active team is
-over the cap. Worker logs are under
-`runs/<round>/stages/<stage>/<role>/<agent>/`; the round keeps its starting
-config even if another is confirmed. Non-build workers use read-only tools
-and return structured results; the runner writes reports and applies allowed
-queue effects. Multiple reviewers get a parallel first turn and a parallel
-reply turn in the same sessions, within the original worker deadline.
+For interpretation failures, read the latest status on the Team or
+Direction page and `team/last-apply.json` or `direction/last-apply.json`.
+Each directory's `interpretation-runs/<id>/` holds the prompt and process
+output. A timeout, invalid output or failed interpretation leaves the
+current team or Focus unchanged; saved changes wait for the next round.
+The page refuses mutations while its changes are being applied. Check
+`MAX_AGENTS` if a pending or active team is over the cap, and check
+`enabled` and the schedule when changes remain waiting without a new round.
+`direction/notes.json` retains notes and their outcomes; `direction/goals.json`
+records goal provenance and the latest changes. Worker logs are under
+`runs/<round>/stages/<stage>/<role>/<agent>/`; each round keeps its starting
+config. Custom non-build workers use read-only tools and return structured
+results; built-in Suggestion uses the standard `SUGGEST.md` agent and queue
+CLI. The runner writes custom workers' reports and applies permitted queue
+effects. Multiple reviewers get a parallel first turn and a parallel reply
+turn in the same sessions, within the original worker deadline.
 Auto-approval records are under `runs/<round>/approve/`: prompt, transcript,
 response, applied result and summary. The run log explains when it skips
 because the mode is off, nothing is left to examine or no slot is available.
@@ -347,7 +385,7 @@ if you point `RULES.md` at it.
 - **Fail closed, so the loop keeps working.** A missing guard, identity or
   login reduces a round to suggestions, never to a half-working publish.
 - **Authority is explicit.** By default the human approves on the dashboard.
-  Confirmed team reviewers can filter or approve only under their assigned
+  Active team reviewers can filter or approve only under their assigned
   authority and the fixed voting rules. The optional auto-approval agent
   uses the same read-only reviewer tools (`--safe-mode --restricted`,
   `Read,Grep,Glob`), guard and worktree. The runner applies structured
@@ -363,5 +401,7 @@ if you point `RULES.md` at it.
 - **Merges are pinned and gated.** The gate merges only the exact commit it
   pushed, and only once the gate is green.
 - **Ownership is split.** The human owns `DIRECTION.md`, `RULES.md`,
-  `shoemaker.conf`, confirmed team settings and the installation; the agents
-  own `LEDGER.md` and their run directories. The guard enforces this.
+  `shoemaker.conf`, saved team changes, Direction notes and the installation;
+  the runner validates and applies interpreted notes and team changes at
+  round start. Worker agents own `LEDGER.md` and their run directories. The
+  guard enforces this.

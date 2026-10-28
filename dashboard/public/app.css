@@ -375,11 +375,54 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
 .log-list li > * { padding: 7px 10px; }
 .log-list li > * + * { border-left: 1px solid var(--rule); }
 
-/* Team page: role rows use the same rules, without the queue grid. */
-#team-page .item { padding: 12px 0; border-bottom: 1px solid var(--rule); display: grid; gap: 8px; }
+/* Team page: the form adds a role; the team ledger edits and removes them.
+   A change waits for the next round, so its mark is drawn in stitches not
+   sewn yet: dotted tags, a dashed line round the waiting count. */
+#team-page .lead, #direction-page .lead { margin: 0 0 20px; max-width: 68ch; }
 #team-page label { display: grid; gap: 4px; color: var(--muted); }
-#team-page .row label { display: inline-grid; }
-#team-page ol { padding-left: 20px; }
+#team-page .role-fields { display: grid; grid-template-columns: minmax(0, 18rem) 6rem; gap: 10px 12px; }
+#team-page .role-fields .wide { grid-column: 1 / -1; }
+#team-page .role-fields input { width: 100%; }
+#team-page .team-ledger { margin: 0 0 12px; }
+#team-page .team-ledger .item-list > li.cols, #team-page .team-ledger .item {
+  display: grid; gap: 0; padding: 0; grid-template-columns: 9rem 4.5rem minmax(0, 1fr) 7rem 8rem 8.5rem;
+}
+#team-page .team-ledger .item > :nth-child(2), #team-page .team-ledger li.cols > :nth-child(2) { text-align: right; font-variant-numeric: tabular-nums; }
+#team-page .team-ledger .item.editing { display: block; padding: 10px 12px 12px; background: var(--surface); box-shadow: inset 3px 0 0 var(--ink); }
+#team-page .team-ledger .item-list > .item[hidden] { display: none; }
+#team-page .role-stage { display: block; }
+#team-page .role-does .tag { display: inline-block; margin: 1px 0 3px; }
+#team-page .role-does .desc, #team-page .was, #team-page .instr-text { display: block; }
+#team-page .was { margin: 4px 0 0; color: var(--muted); }
+#team-page .was b { color: var(--ink); font-weight: 600; }
+#team-page .ch-remove .role-name strong, #team-page .ch-remove .desc { text-decoration: line-through; color: var(--muted); }
+#team-page details.instr { margin-top: 2px; }
+#team-page details.instr summary { cursor: pointer; color: var(--muted); }
+#team-page .instr-body { margin: 4px 0; padding: 6px 8px; border: 1px solid var(--rule); background: var(--surface); }
+#team-page .instr-text { margin-top: 4px; white-space: pre-wrap; }
+#team-page .queue-section .item-actions > :only-child { grid-column: 1 / -1; }
+#team-page .waiting { justify-content: space-between; margin: 0 0 10px; padding: 4px 4px 4px 10px; border: 1px dashed var(--stitch); }
+
+/* Direction: your notes, then the goals they became. Same ledgers as Todos. */
+.note-form textarea { width: 100%; resize: vertical; }
+.reader { margin: 12px 0; }
+#direction-page .queue-section.notes { margin: 0; }
+#direction-page .queue-section .note-list > li.cols, #direction-page .queue-section .note-list > .item {
+  grid-template-columns: 7.5rem minmax(0, 1.2fr) minmax(0, 1fr) 5.5rem;
+}
+#direction-page .queue-section .goal-list > li.cols, #direction-page .queue-section .goal-list > .item {
+  grid-template-columns: 2.75rem 12rem minmax(0, 1fr) 10rem 5.5rem;
+}
+#direction-page .queue-section .item-actions { grid-template-columns: 1fr; }
+#direction-page .note-list .item:not(.waiting) { color: var(--muted); }
+#direction-page .note-list .item:not(.waiting) .note-body { color: var(--ink); }
+#direction-page .note-body, #direction-page .goal-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+#direction-page .goal-list .item > .goal-title.wide { grid-column: span 2; }
+#direction-page .goals { margin-top: 8px; }
+#direction-page details.file[open] pre {
+  margin: 10px 0 8px; padding: 10px 12px; border: 1px solid var(--stitch); background: var(--canvas);
+  font: 13px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+}
 
 /* Login */
 .login { max-width: 320px; margin: 96px auto; text-align: center; border: 1px solid var(--rule); background: var(--surface); padding: 28px 24px; }
@@ -436,4 +479,32 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
   .facts dt, .facts dd { padding: 7px 10px; }
   .log-list li { grid-template-columns: 1fr; }
   .log-list li > * + * { border-left: 0; padding-top: 0; }
+  /* Four pages share the row. */
+  .nav-links a { flex: 1 1 0; min-width: 0; padding-inline: 4px; }
+  .nav-links a.active::before { margin-right: 5px; width: 7px; }
+  /* Direction and team ledgers: each row stacks its cells, labelled by position. */
+  #direction-page .queue-section .item-list > .item, #team-page .queue-section .item-list > .item {
+    display: grid; grid-template-columns: 2.75rem minmax(0, 1fr); padding: 8px 0;
+  }
+  #direction-page .queue-section .item > *, #team-page .queue-section .item > * { grid-column: 2; padding: 1px 12px; border-left: 0; }
+  #direction-page .goal-list .item > .item-id { grid-column: 1; grid-row: 1 / span 4; padding: 1px 0 0 8px; }
+  #direction-page .goal-list .item > .goal-title.wide { grid-column: 2; }
+  #team-page .team-ledger .item > .role-count { grid-column: 1; grid-row: 1 / span 6; padding: 1px 0 0 8px; text-align: left; }
+  #direction-page .item .goal-from, #direction-page .item .note-outcome { color: var(--muted); }
+  #direction-page .item .goal-from::before { content: 'From: '; }
+  #team-page .team-ledger .item > .role-count::after { content: '×'; }
+  #team-page .team-ledger .item > .role-authority::before { content: 'Authority: '; color: var(--muted); }
+  #team-page .team-ledger .item > .role-model::before { content: 'Model / effort: '; color: var(--muted); }
+  #direction-page .queue-section .item-list > li.cols, #team-page .queue-section .item-list > li.cols { display: none; }
+  #direction-page .queue-section .item > .item-actions, #team-page .queue-section .item > .item-actions {
+    grid-column: 2; grid-row: auto; display: flex; gap: 8px; padding: 6px 12px 4px;
+  }
+  #direction-page .queue-section .item > .item-actions:empty, #team-page .queue-section .item > .item-actions:empty { display: none; }
+  #direction-page .queue-section .item-actions button, #team-page .queue-section .item-actions button { width: auto; height: 40px; padding-inline: 16px; }
+  #direction-page .queue-section .note-list > .item { grid-template-columns: minmax(0, 1fr); }
+  #direction-page .queue-section .note-list > .item > * { grid-column: 1; }
+  #direction-page .note-list .item > .note-at { padding-top: 0; font-size: 13px; color: var(--muted); }
+  #team-page .team-ledger .item.editing { display: block; padding: 10px 12px 12px; }
+  #team-page .role-fields { grid-template-columns: minmax(0, 1fr) 5.5rem; }
+  #team-page .waiting { padding: 6px 4px 6px 10px; }
 }

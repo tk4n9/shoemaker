@@ -59,11 +59,15 @@ reason. Nothing reaches your default branch except through the gate.
     model and the pace.
   - `RULES.md`: your project's hard limits, such as "never touch `src/auth/`".
   - The reasons you give when rejecting ideas reach the suggestion agent.
-- **A team you define.** On the dashboard's Team page, give each role a name,
-  count and description. Apply prepares a proposed team; inspect its stages,
-  capabilities, authority and instructions, then Confirm to use it in future
-  rounds. Reviewers can discuss ideas before you see them or build them,
-  according to the authority you grant.
+  - On the dashboard's Direction page, jot down rough notes; the next round
+    turns them into goals in `DIRECTION.md`'s Focus. Remove a goal to stop
+    work on it.
+- **A team you define.** The Team page starts from the default team (one
+  suggestion agent, one or more builders). Add roles with a name, count and
+  description, or edit and remove them in place. The next round interprets
+  the changes into stages, capabilities, authority and instructions, and
+  runs with them. Reviewers can discuss ideas before you see them or build
+  them, according to the authority you grant.
 - **Fail-closed safeguards.** Without a login, a Git identity or a working
   push guard, a round only suggests. Every safeguard answers an incident from
   real use: see [docs/lessons.md](docs/lessons.md).
@@ -161,14 +165,17 @@ checkout's `shoemaker`.
 
 On each tick of the timer:
 
-1. **Reconcile.** Items whose PR merged are marked shipped; items whose PR
+1. **Take in your changes.** Notes waiting on the Direction page become
+   goals in `DIRECTION.md`, and waiting Team page changes become the team.
+   If either fails, it keeps waiting and the round goes on.
+2. **Reconcile.** Items whose PR merged are marked shipped; items whose PR
    was closed are marked failed.
-2. **Suggest.** If fewer than `max_waiting` ideas wait for your review, the
+3. **Suggest.** If fewer than `max_waiting` ideas wait for your review, the
    suggestion agent adds up to `per_round` more, in a read-only checkout.
    When enabled, auto approval starts alongside the other agents, using the
    ideas waiting at round start. Ideas added during the round wait for the
    next approver. Existing build selections are unchanged.
-3. **Build.** For each approved item whose prerequisites have shipped (up to
+4. **Build.** For each approved item whose prerequisites have shipped (up to
    `max_builds`), an implementation agent runs in its own worktree:
    1. It checks the spec against the code and writes a proposal.
    2. It implements and verifies the change.
@@ -178,7 +185,7 @@ On each tick of the timer:
 
    An item left unfinished is resumed next round; after three rounds it fails
    with a reason, for you.
-4. **Idle.** With nothing to suggest, approve or build, no agent starts and
+5. **Idle.** With nothing to suggest, approve or build, no agent starts and
    the round costs nothing.
 
 The dashboard says, at the top, what the next round will build, or why it
@@ -186,19 +193,22 @@ will build nothing.
 
 ## Teams
 
-The default round above needs no team configuration. For a custom team, open
-**Team** on the dashboard and add one row per role. For example, ask for three
-feature suggestion agents, two feature reviewers who discuss whether ideas
-are worth building, and five implementation agents. Say explicitly if a
-reviewer may filter out ideas or approve them for building; the default is
-advisory, so you still decide.
+Without configuration, the **Team** page shows the default team: Suggestion
+×1 and Implementation × `max_builds`, which is exactly the round above. Add
+a role with the form at the top, for example three feature suggestion
+agents, two feature reviewers who discuss whether ideas are worth building,
+or a reporter. Edit or remove a role on its row in **Active team**. Say
+explicitly if a reviewer may filter out ideas or approve them for building;
+the default is advisory, so you still decide.
 
-**Apply** starts a background Claude Code session with no tools. It interprets
-the descriptions into ordered stages and role instructions. The server
-validates the result before showing a preview. Check each role's stage,
-count, capabilities, authority and instructions, then **Confirm** or
-**Discard**. Applying, a failed interpretation, and discarding a proposal
-leave the active team unchanged. Only one interpretation runs at a time.
+Changes wait, marked on their rows, until the next round starts. Then a
+Claude Code session with no tools interprets the descriptions into ordered
+stages and role instructions, Shoemaker validates the result, and that round
+runs with the new team. **Instructions** on each row shows what its agent
+was told. If the interpretation fails, the round runs the current team and
+the changes keep waiting, with the reason. Suggestion and Implementation
+keep `SUGGEST.md` and `IMPLEMENT.md` in any team; their descriptions add a
+focus.
 
 Each round reads the active team once. Its stages run in order, with agents
 in each stage running in parallel. The fixed capabilities are `propose`,
@@ -213,7 +223,8 @@ ends. Later build stages can use its approvals. It counts as one agent: a
 full roster gives up one build slot, or the approver skips that round if no
 build can give way. Team review authorities and voting rules are unchanged.
 
-See [docs/team.md](docs/team.md) for the config, reviewer rules and records.
+See [docs/team.md](docs/team.md) for the config, reviewer rules and records,
+and [docs/direction.md](docs/direction.md) for the Direction page.
 
 ## Modes
 
@@ -244,9 +255,8 @@ Shoemaker runs agents unattended with your user's permissions. Read this
 before you turn on `ship`.
 
 - **Approval.** Human approval, priority changes and rejection stay on the
-  dashboard. A confirmed team's reviewers can record scoped verdicts; the
-  runner applies only the filtering or approval authority shown in the
-  preview. The default-off Todos switch can separately enable auto approval;
+  dashboard. A team's reviewers can record scoped verdicts; the runner
+  applies only the filtering or approval authority shown on the Team page. The default-off Todos switch can separately enable auto approval;
   agents cannot change it. The approver has only `Read`, `Grep` and `Glob`
   with `--safe-mode --restricted`, the guard and a worktree. The runner
   applies its structured results transactionally, only to snapshot items
@@ -276,8 +286,10 @@ before you turn on `ship`.
 
 - [docs/queue.md](docs/queue.md): the queue's statuses, build order, and the
   CLI contract the agents use
-- [docs/team.md](docs/team.md): defining a team, previewing its authority and
-  understanding its stages and records
+- [docs/team.md](docs/team.md): defining a team, its authority, stages and
+  records
+- [docs/direction.md](docs/direction.md): steering the Focus with notes on
+  the Direction page
 - [docs/hosts.md](docs/hosts.md): GitHub, GitLab and local-only setups,
   logins, and host settings
 - [docs/ci.md](docs/ci.md): setting up CI as the merge gate

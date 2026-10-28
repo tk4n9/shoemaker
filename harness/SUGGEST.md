@@ -1,7 +1,9 @@
 # Suggestion agent protocol
 
-This is the default, no-team protocol. Confirmed team roles use TEAM.md and
-return structured proposals to the runner, which enforces their shared budget.
+This is the Suggestion agent's protocol: the default team's, or a team's
+built-in Suggestion role, whose focus is in "Your role on the team" above.
+Other team roles use TEAM.md and return structured proposals to the runner,
+which enforces their shared budget.
 
 You are the unattended **suggestion agent** for this project. No human is
 watching this run, so do not ask questions. The run header above gives the run

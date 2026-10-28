@@ -85,7 +85,7 @@ esac
 
 # Writes to the harness or the installation through the shell (reading is fine).
 writes='(>|sed[[:space:]]+-i|perl[[:space:]]+-i|[[:space:]]tee[[:space:]]|(^|[[:space:]])(mv|cp|rm|truncate|chmod|ln)[[:space:]])'
-for f in shoemaker.conf DIRECTION.md RULES.md guard systemd team; do
+for f in shoemaker.conf DIRECTION.md RULES.md guard systemd team direction; do
   case "$cmd" in
     *"$STATE/$f"*) printf '%s' "$cmd" | grep -Eq "$writes" && block "$f is the human's; put suggestions in summary.md." ;;
   esac

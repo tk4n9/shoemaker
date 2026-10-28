@@ -7,14 +7,17 @@ links for depth (progressive disclosure — don't load everything at once).
 Shoemaker's web dashboard and queue CLI. A suggestion agent proposes todos,
 the human approves them with a priority (or rejects them), and an
 implementation agent builds the approved ones once their prerequisites have
-shipped. A confirmed team can replace that flow with custom stages; review
-roles can receive explicit filtering or approval authority through the
-dashboard's preview and confirmation flow.
+shipped. That pair is the default team; on the Team page the human can
+change it into custom stages, and review roles can receive explicit
+filtering or approval authority. On the Direction page the human's notes
+become goals in `DIRECTION.md`'s Focus. Both kinds of change wait for the
+next round, which interprets and applies them before any agent starts.
 
 - One managed project per running dashboard. Its state directory
   (`$SHOEMAKER_STATE`) holds `dashboard.json` and `queue.db`.
 - The queue contract (statuses, build order, CLI): **[../docs/queue.md](../docs/queue.md)**.
 - The team schema, capability limits and voting rules: **[../docs/team.md](../docs/team.md)**.
+- The Direction page's notes and goals: **[../docs/direction.md](../docs/direction.md)**.
 
 ## The one thing to know: features are pluggable
 A page is **one file** in `src/features/`. The registry auto-discovers it — there
@@ -41,7 +44,10 @@ src/
   features/    one file per page (todos.js is the reference example)
   queue.js     the queue rules: statuses, moves, readiness, build order, log
   team-config.js shared schema validation and project team settings
-  team.js      asynchronous interpretation, preview, atomic confirmation
+  default-team.js the default team (the standard round) as role rows
+  team.js      waiting team changes (pending.json), applied at round start
+  direction.js notes, the Focus goals of DIRECTION.md, applied at round start
+  interpreter.js the tool-free headless interpreter, settings and a pid lock
   team-results.js validates structured worker effects before applying them
   team-context.js resolves authoritative context from worktree metadata
   graph.js     layered dependency-graph layout, drawn as server-side SVG
@@ -49,8 +55,9 @@ src/
   db.js        sqlite schema + connection + migrations ($SHOEMAKER_STATE/queue.db, or $SHOEMAKER_DB)
 bin/queue.mjs  the agents' CLI over the same database (`shoemaker queue`)
 bin/team.mjs   team inspection/validation and runner-only result settlement
+bin/round-start.mjs  run.sh's first step: Direction notes, then team changes
 scripts/       new-page.mjs (scaffolder), check.mjs (feedback loop)
-test/          node:test tests: smoke (HTTP), queue (rules + CLI), graph, team
+test/          node:test tests: smoke (HTTP), queue (rules + CLI), graph, team, direction
 docs/          deeper guides
 public/        app.js, app.css (the Seam style: tokens and rules at its top), fonts/ (Atkinson Hyperlegible, OFL)
 ```
@@ -81,13 +88,17 @@ Never commit `config.json`/`data/`/secrets`, emit unescaped user/db HTML, or
 render agent-written markdown without
 `sanitize()` in `public/app.js`.
 
-Team constraints: validate all model output; preserve submitted role names,
-descriptions and counts; default reviewer authority to advisory; require a
-preview and explicit confirmation before atomic activation. A round uses
-one config snapshot. Non-build workers use read-only tools and return
+Team constraints: validate all model output; preserve submitted role ids,
+names, descriptions, counts and built-in markers; default reviewer authority
+to advisory; built-in roles keep their capability and protocol. Only the
+human's saved changes reach the interpreter, and only the runner, outside
+agent worktrees, applies its validated result. A round uses one config
+snapshot. Non-build workers use read-only tools and return
 structured effects; build workers remain limited to their assigned item.
 Capability and authority checks use guard-protected runtime context, not
-agent-writable copies in run output.
+agent-writable copies in run output. Direction notes change only the Focus
+bullets, through a validated answer; never overwrite a Focus section the
+human edited while the notes were read.
 
 ## Conventions
 - Mutations are JSON `POST` endpoints; client (`public/app.js`) does fetch-then-reload (server DOM = source of truth).

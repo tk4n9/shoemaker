@@ -24,7 +24,7 @@ round start is unchanged.
 
 A round with nothing to do leaves one line in `runs/idle.log`.
 
-If you confirm a custom team on the dashboard, its stages replace the default
+If you change the team on the dashboard, its stages replace the default
 suggestion/build sequence. Stages run in order and agents within a stage run
 in parallel. The build roles' total count replaces `max_builds`; the backlog,
 per-round idea limit, mode, guard and merge gate still apply.
@@ -49,29 +49,34 @@ until a later round.
     returned or restored ideas for you. Held ideas wait until their spec,
     prerequisites or notes change. Waiting prerequisites must be approved
     in the same result before an item can be approved.
-- **Define a team** on the dashboard's **Team** page. Add roles with a name,
-  agent count and plain-language description, then **Apply**. This starts an
-  interpretation in the background; inspect the proposed stages,
-  capabilities, authority and instructions before **Confirm**. **Discard**
-  keeps the current team. Applying or a failed interpretation changes
-  nothing in the active team.
+- **Shape the team** on the dashboard's **Team** page. It starts as the
+  default team: Suggestion and Implementation. Add a role with a name, agent
+  count and plain-language description in the form; edit or remove roles on
+  their rows. Changes wait, marked, until the next round starts, which
+  interprets them into stages, capabilities, authority and instructions and
+  runs with the new team. If that fails, the round runs the current team and
+  the changes keep waiting, with the reason.
   - Reviewer authority defaults to `advisory`: notes and verdicts for you to
     decide. `filter` can screen ideas out on a majority rejection, and
     `approve` can approve an idea only with unanimous approval. State the
-    authority you want in the description, and check it in the preview.
-  - A round reads the team once at its start. Confirming affects following
-    rounds, not one already running.
+    authority you want in the description, and check it on the page after
+    the round.
+  - A round already running keeps its team; changes take effect at the next
+    round's start.
+- **Jot down notes** on the **Direction** page. The next round turns them
+  into goals in `DIRECTION.md`'s Focus; **Remove** a goal to stop work on it.
 - **Steer** in `DIRECTION.md`. The focus and feedback are in the body; the
-  front matter sets each round and the team interpreter:
+  front matter sets each round and the interpreter for the Team and
+  Direction pages:
 
   | Key | Meaning |
   |---|---|
   | `enabled` | `false` pauses: the timer still fires, but the round exits at once |
   | `mode` | `suggest`: no builds. `review`: builds open draft PRs for you to merge. `ship`: builds merge once the gate is green. Auto approval runs in any mode when enabled |
-  | `model`, `effort` | default for all agents and team interpretation; empty means your Claude Code default |
-  | `suggest_model`, `suggest_effort` | overrides for the default suggestion agent, when no team is active |
+  | `model`, `effort` | default for all agents and the interpreter; empty means your Claude Code default |
+  | `suggest_model`, `suggest_effort` | overrides for the Suggestion agent (the default team's, or a team's built-in role) |
   | `approve_model`, `approve_effort` | overrides for auto approval; empty or absent falls back to `model` / `effort`, then the Claude Code default |
-  | `apply_model`, `apply_effort` | overrides for the team interpreter only; empty or absent falls back to `model` / `effort`, then the Claude Code default |
+  | `apply_model`, `apply_effort` | overrides for the interpreter only (team changes and Direction notes); empty or absent falls back to `model` / `effort`, then the Claude Code default |
   | `max_waiting`, `per_round` | how many ideas may wait for you, and how many one round adds |
   | `max_builds` | how many approved items are built side by side when no team is active; an active team's build count replaces it |
 
@@ -80,10 +85,11 @@ until a later round.
 - **Settings** for the host, the gate, the commands and the timeouts are in
   `shoemaker.conf`. `MAX_AGENTS` caps total agents per round; it defaults to
   16 when the key is absent, including after an update. `APPLY_TIMEOUT` limits
-  team interpretation and defaults to `5m` when absent. It accepts positive
+  each interpretation and defaults to `5m` when absent. It accepts positive
   integers with `h`, `m` or `s`, or bare seconds, like the worker timeouts.
-  Invalid `APPLY_TIMEOUT` or `apply_effort` prevents Apply from starting;
-  `apply_effort` accepts `low`, `medium`, `high`, `xhigh` or `max`.
+  Invalid `APPLY_TIMEOUT` or `apply_effort` stops the interpretation before
+  it starts, and the changes keep waiting; `apply_effort` accepts `low`,
+  `medium`, `high`, `xhigh` or `max`.
   `approve_effort` accepts the same values and is checked before a round.
   Auto approval uses `SUGGEST_TIMEOUT`. `--model` / `--effort` override its
   settings along with the other agents.
@@ -96,9 +102,10 @@ until a later round.
 | `runs/<round>/q<item>/summary.md` | what the implementation agent did, verified, and wants you to decide (next to `proposal.md`, `prompt.md`, `transcript.jsonl`) |
 | `runs/<round>/suggest/summary.md` | the ideas added, those dropped, and findings that need you |
 | `runs/<round>/approve/` | auto-approval prompt, transcript, response, applied result and summary |
-| `team/active.json` | the confirmed team used by subsequent rounds |
-| `team/proposed.json` | a validated preview awaiting Confirm or Discard |
-| `team/` | instructions embedded in active/proposed configs, interpretation status, model/effort and logs |
+| `team/active.json` | the team rounds run (absent for the default team), with each role's instructions |
+| `team/pending.json` | team changes waiting for the next round |
+| `team/last-apply.json`, `team/interpretation-runs/` | the latest round-start application: status, model/effort, error, and the interpreter's prompt and output |
+| `direction/notes.json`, `direction/last-apply.json` | your Direction notes, what each did, and the latest reading |
 | `runs/<round>/team.json` | the config snapshot for that round |
 | `runs/<round>/stages/<stage>/<role>/<agent>/` | team worker prompts, transcripts, reports and build summaries; agent numbering starts at 1 |
 | `LEDGER.md` | one entry per build |
@@ -108,7 +115,7 @@ until a later round.
 
 ```sh
 shoemaker status                     # settings, timer, queue, latest rounds
-shoemaker team show                  # the confirmed team, or null for the default round
+shoemaker team show                  # the active team, or null for the default team
 shoemaker doctor                     # a dry run: preflight, guard, decisions, prompts
 shoemaker run                        # a round now, in the foreground
 shoemaker run --only suggest         # just ask for ideas

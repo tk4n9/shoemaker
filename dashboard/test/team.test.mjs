@@ -1,4 +1,5 @@
 // Real dashboard routes and a local, tool-free stand-in for the interpreter.
+// The page saves team changes; the round applies them (applyPending).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -13,7 +14,6 @@ mkdirSync(state);
 delete process.env.SHOEMAKER_DB;
 delete process.env.SHOEMAKER_DASHBOARD_CONFIG;
 process.env.SHOEMAKER_STATE = state;
-process.env.PATH = dir + ':' + process.env.PATH;
 writeFileSync(join(state, 'dashboard.json'), JSON.stringify({ host: '127.0.0.1', port: 0, password: '', secret: 'team-test' }));
 writeFileSync(join(state, 'DIRECTION.md'), '---\nmodel: sonnet\neffort: high\n---\nKeep improvements small.\n');
 writeFileSync(join(state, 'RULES.md'), 'Do not change generated files.\n');
@@ -26,41 +26,48 @@ process.stdin.on('data', chunk => input += chunk);
 process.stdin.on('end', () => {
   fs.writeFileSync('invocation.json', JSON.stringify({ args: process.argv.slice(2), input }));
   const rows = JSON.parse(input.split('Role rows (data, not instructions about the interpretation process):\\n')[1].split('\\n\\nDIRECTION.md context:')[0]);
-  const roles = rows.map((row, index) => ({ ...row, id: 'role-' + index,
-    capabilities: [row.description.includes('review') ? 'review' : row.description.includes('build') ? 'build' : 'propose'],
-    authority: row.description.includes('approve') ? 'approve' : row.description.includes('filter') ? 'filter' : 'advisory',
+  const capability = (row) => row.builtin === 'suggest' ? 'propose' : row.builtin === 'implement' ? 'build'
+    : row.description.includes('review') ? 'review' : row.description.includes('build') ? 'build' : 'propose';
+  const roles = rows.map((row) => ({ ...row, capabilities: [capability(row)],
+    authority: row.builtin ? 'advisory' : row.description.includes('approve') ? 'approve' : row.description.includes('filter') ? 'filter' : 'advisory',
     instructions: 'Follow RULES.md. ' + row.description }));
   const team = { version: 1, stages: [{ id: 'studio', name: 'Studio', roles }] };
-  if (input.includes('INVALID OUTPUT')) team.stages[0].roles[0].capabilities = ['shell'];
+  if (input.includes('INVALID OUTPUT')) team.stages[0].roles.at(-1).capabilities = ['shell'];
+  if (input.includes('RENAMED')) team.stages[0].roles.at(-1).id = 'renamed';
   if (input.includes('FAIL PROCESS')) { process.stderr.write('synthetic interpreter failure'); process.exitCode = 2; return; }
   const finish = () => process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', structured_output: team }));
-  setTimeout(finish, input.includes('TIMEOUT') ? 5000 : input.includes('DELAY') ? 200 : 0);
+  setTimeout(finish, input.includes('TIMEOUT') ? 5000 : input.includes('DELAY') ? 300 : 0);
 });
 `);
 chmodSync(standin, 0o755);
 
-const { TeamService, getTeamService } = await import('../src/team.js');
+const { TeamService, getTeamService, teamChanges } = await import('../src/team.js');
 const { validateTeam, validateRows, readTeamSettings } = await import('../src/team-config.js');
+const { DEFAULT_DESCRIPTIONS } = await import('../src/default-team.js');
 const { createServer } = await import('../src/server.js');
 const { db } = await import('../src/db.js');
 
 let server;
 let base;
-const rows = [{ name: 'Ideas', count: 3, description: 'Propose focused improvements.' }];
-const post = (path, body) => fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-const status = async () => (await fetch(base + '/team/status')).json();
+const reviewer = { name: 'Reviewer', count: 1, description: 'Read and review each new idea; advice only.' };
+const post = (path, body = {}) => fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const page = async () => (await fetch(base + '/team')).text();
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-async function settled(service = null) {
-  for (let i = 0; i < 200; i++) {
-    const snapshot = service ? service.status() : await status();
-    if (snapshot.interpretation?.status !== 'running') return snapshot;
-    await pause(15);
-  }
-  throw new Error('stand-in did not settle');
+const read = (file) => JSON.parse(readFileSync(file, 'utf8'));
+let n = 0;
+// A fresh state directory, optionally with DIRECTION.md front matter, shoemaker.conf or an active team.
+function project({ front = 'model: sonnet\neffort: high\n', conf = '', active = null } = {}) {
+  const s = join(dir, `project-${++n}`);
+  mkdirSync(join(s, 'team'), { recursive: true });
+  writeFileSync(join(s, 'DIRECTION.md'), `---\n${front}---\nKeep improvements small.\n`);
+  if (conf) writeFileSync(join(s, 'shoemaker.conf'), conf);
+  if (active) writeFileSync(join(s, 'team', 'active.json'), JSON.stringify(active));
+  return s;
 }
-function makeTeam(input = rows) {
-  return { version: 1, stages: [{ id: 'ideas', name: 'Ideas', roles: input.map((row, index) => ({
-    ...row, id: `role-${index}`, capabilities: ['propose'], authority: 'advisory', instructions: 'Propose small ideas.',
+const service = (s, options = {}) => new TeamService({ state: s, command: standin, ...options });
+function makeTeam(roles = [{ id: 'ideas', name: 'Ideas', count: 3, description: 'Propose focused improvements.' }]) {
+  return { version: 1, stages: [{ id: 'ideas', name: 'Ideas', roles: roles.map((role) => ({
+    capabilities: ['propose'], authority: 'advisory', instructions: 'Propose small ideas.', ...role,
   })) }] };
 }
 
@@ -75,68 +82,117 @@ after(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('team page uses shared navigation, role fields and add/remove controls', async () => {
-  const html = await (await fetch(base + '/team')).text();
-  assert.match(html, /class="appnav"/);
+test('without a team the page shows the default team, the add form and per-row controls', async () => {
+  const html = await page();
   assert.match(html, /href="\/team" class="active">Team/);
-  assert.match(html, /id="team-form"/);
+  assert.match(html, /Active team: default/);
+  assert.match(html, /one agent suggests ideas and one builds/);
+  assert.match(html, /id="team-add-form"/);
   for (const name of ['name', 'count', 'description']) assert.ok(html.includes(`name="${name}"`));
-  assert.match(html, /Add role/);
-  assert.match(html, /Remove role/);
-  assert.match(html, /No active team/);
+  for (const control of ['data-team-edit="suggestion"', 'data-team-remove="suggestion"', 'data-team-edit="implementation"']) assert.ok(html.includes(control));
+  assert.match(html, /Built in: <code>SUGGEST\.md<\/code>, as today\./);
+  assert.ok(html.includes(DEFAULT_DESCRIPTIONS.suggest));
+  assert.doesNotMatch(html, /No active team/);
+  assert.doesNotMatch(html, /Apply|Confirm/);
 });
 
-test('team form script submits role names, numeric counts and descriptions as JSON', async () => {
-  const events = {};
-  const submitButton = { disabled: false };
-  const form = { addEventListener: (event, handler) => events[event] = handler, querySelector: () => submitButton };
-  const fields = { name: { value: 'Reviewers' }, count: { value: '2' }, description: { value: 'Discuss and review each idea.' } };
-  const row = { querySelector: (selector) => fields[selector.match(/name="([^"]+)"/)[1]] };
-  const list = { addEventListener() {}, querySelectorAll: () => [row] };
-  const page = { dataset: { teamRunning: '0' }, querySelectorAll: () => [] };
-  const elements = { '#team-page': page, '#team-form': form, '#team-roles': list,
-    '#team-error': {}, '#team-add': { addEventListener() {} } };
-  let sent;
-  let reloaded = false;
-  runInNewContext(readFileSync(join(root, 'public', 'team.js'), 'utf8'), {
-    document: { body: { dataset: { base: '/scratch' } }, querySelector: (selector) => elements[selector] },
-    fetch: async (url, options) => { sent = { url, options }; return { ok: true, json: async () => ({}) }; },
-    location: { reload: () => { reloaded = true; } },
-  });
-  let prevented = false;
-  await events.submit({ preventDefault: () => { prevented = true; } });
-  assert.equal(prevented, true);
-  assert.equal(sent.url, '/scratch/team/apply');
-  assert.equal(sent.options.headers['Content-Type'], 'application/json');
-  assert.deepEqual(JSON.parse(sent.options.body), { rows: [{ name: 'Reviewers', count: 2, description: 'Discuss and review each idea.' }] });
-  assert.equal(reloaded, true);
+test('the default Implementation count follows max_builds', () => {
+  const s = project({ front: 'max_builds: 3\n' });
+  const { view } = service(s).status();
+  assert.deepEqual(view.map((v) => [v.row.id, v.row.count]), [['suggestion', 1], ['implementation', 3]]);
 });
 
-test('Apply starts a background interpreter and exposes a validated preview', async () => {
-  const response = await post('/team/apply', { rows });
-  assert.equal(response.status, 202);
-  const started = await response.json();
-  assert.equal(started.interpretation.status, 'running');
-  const snapshot = await settled();
-  assert.equal(snapshot.interpretation.status, 'ready');
-  assert.equal(snapshot.active, null);
-  assert.equal(snapshot.proposed.stages[0].roles[0].count, 3);
+test('add, edit and remove wait in pending.json and are marked on their rows', async () => {
+  assert.equal((await post('/team/roles', reviewer)).status, 200);
+  const edited = { name: 'Suggestion', count: 1, description: 'Suggest UI improvements first.' };
+  assert.equal((await post('/team/roles/suggestion', edited)).status, 200);
   assert.equal(existsSync(join(state, 'team', 'active.json')), false);
-  const html = await (await fetch(base + '/team')).text();
-  assert.match(html, /Preview ready/);
-  assert.match(html, /Studio/);
-  assert.match(html, /Capabilities/);
-  assert.match(html, /Authority/);
-  assert.match(html, /advisory/);
-  assert.match(html, /Generated instructions/);
-  assert.match(html, /data-team-action="confirm"/);
-  assert.match(html, /data-team-action="discard"/);
+  const pending = read(join(state, 'team', 'pending.json'));
+  assert.deepEqual(pending.rows.map((r) => r.id), ['suggestion', 'implementation', 'reviewer']);
+  assert.equal(pending.rows[0].builtin, 'suggest');
+  const snapshot = getTeamService().status();
+  assert.equal(snapshot.changes, 2);
+  assert.deepEqual(snapshot.view.map((v) => v.change), ['edit', null, 'add']);
+  const html = await page();
+  assert.match(html, /Edited · from the next round/);
+  assert.match(html, /Added · joins at the next round/);
+  assert.match(html, /<b>Runs now:<\/b> Find small features/);
+  assert.match(html, /2 changes<\/strong> take effect when the next round starts/);
+  assert.match(html, /set at the next round/);
+  assert.equal((await post('/team/roles/implementation/remove')).status, 200);
+  assert.match(await page(), /Removed · leaves at the next round/);
+  assert.ok((await page()).includes('data-team-undo="implementation"'));
 });
 
-test('interpreter has no tools, inherited settings or MCP and receives project context', async () => {
-  const snapshot = await status();
-  const log = join(state, snapshot.interpretation.logs, 'invocation.json');
-  const { args, input } = JSON.parse(readFileSync(log, 'utf8'));
+test('Undo takes one change back in team order, and Undo all drops pending.json', async () => {
+  assert.equal((await post('/team/roles/implementation/undo')).status, 200);
+  assert.deepEqual(read(join(state, 'team', 'pending.json')).rows.map((r) => r.id), ['suggestion', 'implementation', 'reviewer']);
+  assert.equal((await post('/team/roles/reviewer/undo')).status, 200);
+  assert.equal(getTeamService().status().changes, 1);
+  assert.equal((await post('/team/undo')).status, 200);
+  assert.equal(existsSync(join(state, 'team', 'pending.json')), false);
+  assert.equal(getTeamService().status().changes, 0);
+});
+
+test('a change back to the current team leaves nothing waiting', async () => {
+  await post('/team/roles/suggestion', { name: 'Suggestion', count: 1, description: 'Something else.' });
+  assert.equal(existsSync(join(state, 'team', 'pending.json')), true);
+  await post('/team/roles/suggestion', { name: 'Suggestion', count: 1, description: `  ${DEFAULT_DESCRIPTIONS.suggest}\n` });
+  assert.equal(existsSync(join(state, 'team', 'pending.json')), false);
+});
+
+test('changes are validated before they are saved', async () => {
+  for (const bad of [{ ...reviewer, count: 0 }, { ...reviewer, count: 1.5 }, { ...reviewer, count: 16 }, { ...reviewer, shell: 'x' },
+    { ...reviewer, name: ' ' }, { ...reviewer, name: 'suggestion' }, { ...reviewer, description: '' }]) {
+    assert.equal((await post('/team/roles', bad)).status, 400, JSON.stringify(bad));
+  }
+  const more = await post('/team/roles/suggestion', { name: 'Suggestion', count: 2, description: 'More ideas.' });
+  assert.equal(more.status, 400);
+  assert.match((await more.json()).error, /one agent/);
+  assert.equal((await post('/team/roles/nobody', reviewer)).status, 409);
+  assert.equal((await post('/team/roles/nobody/remove')).status, 409);
+  const s = project({ active: makeTeam() });
+  assert.throws(() => service(s).remove('ideas'), /at least one role/);
+  assert.equal(existsSync(join(state, 'team', 'pending.json')), false);
+});
+
+test('team mutation routes keep the dashboard same-origin protection', async () => {
+  const response = await fetch(base + '/team/roles', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://example.invalid' }, body: JSON.stringify(reviewer),
+  });
+  assert.equal(response.status, 403);
+});
+
+test('the next round interprets the waiting team, validates it and switches active.json', async () => {
+  const s = project();
+  const team = service(s);
+  team.add(reviewer);
+  team.edit('suggestion', { name: 'Suggestion', count: 1, description: 'Suggest UI improvements first.' });
+  const record = await team.applyPending({ round: '2026-10-28-0330' });
+  assert.equal(record.status, 'applied');
+  const active = read(join(s, 'team', 'active.json'));
+  const roles = active.stages.flatMap((stage) => stage.roles);
+  assert.deepEqual(roles.map((r) => [r.id, r.builtin]), [['suggestion', 'suggest'], ['implementation', 'implement'], ['reviewer', undefined]]);
+  assert.equal(existsSync(join(s, 'team', 'pending.json')), false);
+  const last = read(join(s, 'team', 'last-apply.json'));
+  assert.equal(last.round, '2026-10-28-0330');
+  assert.deepEqual(last.changes, [{ change: 'edit', name: 'Suggestion' }, { change: 'add', name: 'Reviewer' }]);
+  const { teamPage } = await import('../src/features/team.js');
+  const html = teamPage(team.status());
+  assert.match(html, /<h2>Active team<\/h2>/);
+  assert.match(html, /round applied your changes \(Suggestion edited, Reviewer added\)/);
+  assert.match(html, /Built in: <code>SUGGEST\.md<\/code>, as today, with this focus from your description:/);
+  assert.match(html, /Follow RULES\.md\. Read and review each new idea/);
+  assert.doesNotMatch(html, /take effect when the next round starts/);
+  assert.equal((await team.applyPending({ round: 'next' })).status, 'none');
+});
+
+test('the interpreter has no tools, inherited settings or MCP and receives ids, built-in roles and project context', async () => {
+  const s = project();
+  const team = service(s);
+  team.add(reviewer);
+  const record = await team.applyPending();
+  const { args, input } = read(join(s, record.logs, 'invocation.json'));
   const value = (flag) => args[args.indexOf(flag) + 1];
   assert.equal(value('--tools'), '');
   assert.deepEqual(JSON.parse(value('--mcp-config')), { mcpServers: {} });
@@ -145,12 +201,13 @@ test('interpreter has no tools, inherited settings or MCP and receives project c
   assert.equal(value('--permission-mode'), 'dontAsk');
   assert.equal(value('--model'), 'sonnet');
   assert.equal(value('--effort'), 'high');
-  assert.equal(snapshot.interpretation.model, 'sonnet');
-  assert.equal(snapshot.interpretation.effort, 'high');
   assert.equal(value('--output-format'), 'json');
   assert.equal(JSON.parse(value('--json-schema')).additionalProperties, false);
+  assert.match(input, /"id": "reviewer"/);
+  assert.match(input, /"builtin": "suggest"/);
+  assert.match(input, /keeps SUGGEST\.md/);
   assert.match(input, /Keep improvements small/);
-  assert.match(input, /Do not change generated files/);
+  assert.equal(read(join(s, 'team', 'last-apply.json')).model, 'sonnet');
 });
 
 for (const [name, baseModel, baseEffort, overrides, model, effort] of [
@@ -161,60 +218,41 @@ for (const [name, baseModel, baseEffort, overrides, model, effort] of [
   ['all blank settings', '', '', 'apply_model:\napply_effort:\n', '', ''],
   ['all absent settings', '', '', '', '', ''],
 ]) {
-  test(`interpreter uses ${name} and records the actual settings`, async () => {
-    const configState = join(dir, name.replaceAll(' ', '-'));
-    mkdirSync(configState);
-    const direction = join(configState, 'DIRECTION.md');
-    const base = name === 'all absent settings' ? '' : `model: ${baseModel}\neffort: ${baseEffort}\n`;
-    writeFileSync(direction, `---\n${base}${overrides}---\n`);
-    const service = new TeamService({ state: configState, command: standin });
-    const started = service.apply(rows);
-    assert.equal(started.model, model || 'default');
-    assert.equal(started.effort, effort || 'default');
-    writeFileSync(direction, '---\nmodel: haiku\neffort: low\napply_model: changed\n---\n');
-    const snapshot = await settled(service);
-    assert.equal(snapshot.interpretation.status, 'ready');
-    const { args, input } = JSON.parse(readFileSync(join(configState, started.logs, 'invocation.json'), 'utf8'));
+  test(`the interpreter uses ${name} and records the actual settings`, async () => {
+    const front = (name === 'all absent settings' ? '' : `model: ${baseModel}\neffort: ${baseEffort}\n`) + overrides;
+    const s = project({ front });
+    const team = service(s);
+    team.add(reviewer);
+    const record = await team.applyPending();
+    assert.equal(record.status, 'applied');
+    assert.equal(record.model, model || 'default');
+    assert.equal(record.effort, effort || 'default');
+    const { args, input } = read(join(s, record.logs, 'invocation.json'));
     for (const [flag, value] of [['--model', model], ['--effort', effort]]) {
       if (value) assert.equal(args[args.indexOf(flag) + 1], value);
       else assert.ok(!args.includes(flag));
     }
     assert.ok(input.includes(`Otherwise all roles inherit DIRECTION.md model/effort (${baseModel || 'Claude default'}/${baseEffort || 'Claude default'}).`));
-    const record = JSON.parse(readFileSync(join(configState, 'team', 'interpretation.json'), 'utf8'));
-    assert.equal(record.model, model || 'default');
-    assert.equal(record.effort, effort || 'default');
-    const { teamPage } = await import('../src/features/team.js');
-    assert.ok(teamPage(snapshot).includes(`Model: ${model || 'default'}; effort: ${effort || 'default'}.`));
   });
 }
 
-test('invalid Apply settings are rejected before spawning and preserve the active team and preview', (t) => {
-  const invalidState = join(dir, 'invalid-apply-settings');
-  const teamDir = join(invalidState, 'team');
-  mkdirSync(teamDir, { recursive: true });
-  const saved = {
-    'active.json': JSON.stringify(makeTeam()),
-    'proposed.json': JSON.stringify(makeTeam()),
-    'interpretation.json': JSON.stringify({ id: 'previous', status: 'ready', model: 'sonnet', effort: 'high' }),
-  };
-  for (const [file, content] of Object.entries(saved)) writeFileSync(join(teamDir, file), content);
-  const service = new TeamService({ state: invalidState, command: standin });
-  const run = t.mock.method(service, 'run', () => assert.fail('invalid settings must not spawn'));
-  const invalid = [
+test('invalid interpreter settings fail before spawning and keep the waiting changes', async () => {
+  for (const [front, conf, error] of [
     ['model: sonnet\neffort: high\napply_effort: extreme\n', '', /apply_effort must be low, medium, high, xhigh or max/],
     ['effort: invalid\n', '', /effort must be/],
     ...['', 'garbage', '-1s', '0s', '1.5m', '2d', '999999999999h'].map((value) => ['', `APPLY_TIMEOUT="${value}"\n`, /APPLY_TIMEOUT must be/]),
-  ];
-  for (const [direction, conf, error] of invalid) {
-    writeFileSync(join(invalidState, 'DIRECTION.md'), `---\n${direction}---\n`);
-    writeFileSync(join(invalidState, 'shoemaker.conf'), conf);
-    assert.throws(() => service.apply(rows), error);
-    assert.equal(run.mock.callCount(), 0);
-    assert.equal(service.job, null);
-    assert.equal(existsSync(join(teamDir, '.interpret.lock')), false);
-    assert.equal(existsSync(join(teamDir, 'interpretation-runs')), false);
-    for (const [file, content] of Object.entries(saved)) assert.equal(readFileSync(join(teamDir, file), 'utf8'), content);
-    assert.deepEqual(service.status().active, makeTeam());
+  ]) {
+    const s = project({ front, conf, active: makeTeam() });
+    const team = service(s);
+    team.add(reviewer);
+    const pending = readFileSync(join(s, 'team', 'pending.json'), 'utf8');
+    const record = await team.applyPending();
+    assert.equal(record.status, 'failed');
+    assert.match(record.error, error);
+    assert.equal(existsSync(join(s, 'team', 'interpretation-runs')), false);
+    assert.equal(existsSync(join(s, 'team', '.interpret.lock')), false);
+    assert.equal(readFileSync(join(s, 'team', 'pending.json'), 'utf8'), pending);
+    assert.deepEqual(read(join(s, 'team', 'active.json')), makeTeam());
   }
 });
 
@@ -225,169 +263,151 @@ test('APPLY_TIMEOUT defaults to five minutes and accepts h, m, s and bare second
     scheduled.push(ms);
     return setTimer(callback, ms, ...args);
   });
-  for (const [index, conf, timeout] of [
-    [0, '', 300_000],
-    [1, 'APPLY_TIMEOUT="2h" # hours\n', 7_200_000],
-    [2, "APPLY_TIMEOUT='3m'\n", 180_000],
-    [3, 'APPLY_TIMEOUT=4s\n', 4000],
-    [4, 'APPLY_TIMEOUT=2m\nAPPLY_TIMEOUT=5\n', 5000],
+  for (const [conf, timeout] of [
+    ['', 300_000], ['APPLY_TIMEOUT="2h" # hours\n', 7_200_000], ["APPLY_TIMEOUT='3m'\n", 180_000],
+    ['APPLY_TIMEOUT=4s\n', 4000], ['APPLY_TIMEOUT=2m\nAPPLY_TIMEOUT=5\n', 5000],
   ]) {
-    const configState = join(dir, `duration-${index}`);
-    mkdirSync(configState);
-    const service = new TeamService({ state: configState, command: standin });
-    writeFileSync(join(configState, 'shoemaker.conf'), conf);
-    service.apply(rows);
-    assert.equal(scheduled.at(-1), timeout);
-    assert.equal((await settled(service)).interpretation.status, 'ready');
+    const team = service(project({ conf }));
+    team.add(reviewer);
+    assert.equal((await team.applyPending()).status, 'applied');
+    assert.ok(scheduled.includes(timeout), `${conf} → ${timeout}`);
   }
 });
 
-test('APPLY_TIMEOUT kills the interpreter at the configured deadline', async () => {
-  const timeoutState = join(dir, 'configured-timeout');
-  mkdirSync(timeoutState);
-  const service = new TeamService({ state: timeoutState, command: standin });
-  writeFileSync(join(timeoutState, 'shoemaker.conf'), 'APPLY_TIMEOUT=1s\n');
-  service.apply([{ ...rows[0], description: 'Propose focused improvements. TIMEOUT' }]);
-  const snapshot = await settled(service);
-  assert.equal(snapshot.interpretation.status, 'failed');
-  assert.match(snapshot.interpretation.error, /timed out after 1000 ms/);
-  assert.equal(snapshot.proposed, null);
-  assert.equal(service.job, null);
+test('a timed-out interpretation is killed and keeps the current team and the waiting changes', async () => {
+  const s = project({ conf: 'APPLY_TIMEOUT=1s\n', active: makeTeam() });
+  const team = service(s);
+  team.add({ ...reviewer, description: 'Review ideas. TIMEOUT' });
+  const record = await team.applyPending();
+  assert.equal(record.status, 'failed');
+  assert.match(record.error, /timed out after 1000 ms/);
+  assert.deepEqual(read(join(s, 'team', 'active.json')), makeTeam());
+  assert.equal(team.status().changes, 1);
 });
 
-test('Confirm atomically activates the preview and refuses a stale preview', async () => {
-  const snapshot = await status();
-  const response = await post('/team/confirm', { id: snapshot.interpretation.id });
-  assert.equal(response.status, 200);
-  assert.deepEqual(JSON.parse(readFileSync(join(state, 'team', 'active.json'), 'utf8')), snapshot.proposed);
-  const current = await status();
-  assert.equal(current.interpretation.status, 'confirmed');
-  assert.equal(current.proposed, null);
-  assert.deepEqual(current.active, snapshot.proposed);
-  assert.equal((await post('/team/confirm', { id: snapshot.interpretation.id })).status, 409);
-});
-
-test('Discard removes only the proposal and leaves the active team unchanged', async () => {
-  const active = readFileSync(join(state, 'team', 'active.json'), 'utf8');
-  await post('/team/apply', { rows: [{ name: 'Review', count: 2, description: 'Discuss and review; filter unsuitable ideas.' }] });
-  const snapshot = await settled();
-  assert.equal(snapshot.proposed.stages[0].roles[0].authority, 'filter');
-  const response = await post('/team/discard', { id: snapshot.interpretation.id });
-  assert.equal(response.status, 200);
-  assert.equal(existsSync(join(state, 'team', 'proposed.json')), false);
-  assert.equal(readFileSync(join(state, 'team', 'active.json'), 'utf8'), active);
-  assert.equal((await status()).interpretation.status, 'discarded');
-});
-
-test('a second Apply and confirm/discard are refused while interpretation runs', async () => {
-  const delayed = [{ ...rows[0], description: 'Propose focused improvements. DELAY' }];
-  assert.equal((await post('/team/apply', { rows: delayed })).status, 202);
-  const snapshot = await status();
-  assert.equal((await post('/team/apply', { rows })).status, 409);
-  assert.equal((await post('/team/confirm', { id: snapshot.interpretation.id })).status, 409);
-  assert.equal((await post('/team/discard', { id: snapshot.interpretation.id })).status, 409);
-  const finished = await settled();
-  await post('/team/discard', { id: finished.interpretation.id });
-});
-
-test('invalid interpreter output fails and preserves the active configuration', async () => {
-  const active = readFileSync(join(state, 'team', 'active.json'), 'utf8');
-  await post('/team/apply', { rows: [{ ...rows[0], description: 'Propose focused improvements. INVALID OUTPUT' }] });
-  const snapshot = await settled();
-  assert.equal(snapshot.interpretation.status, 'failed');
-  assert.match(snapshot.interpretation.error, /capabilities/);
-  assert.equal(snapshot.proposed, null);
-  assert.equal(readFileSync(join(state, 'team', 'active.json'), 'utf8'), active);
-  assert.match(await (await fetch(base + '/team')).text(), /Interpretation failed/);
-});
-
-test('interpreter failure surfaces its error and permits the next Apply', async () => {
-  await post('/team/apply', { rows: [{ ...rows[0], description: 'Propose focused improvements. FAIL PROCESS' }] });
-  const snapshot = await settled();
-  assert.equal(snapshot.interpretation.status, 'failed');
-  assert.match(snapshot.interpretation.error, /synthetic interpreter failure/);
-  assert.equal(existsSync(join(state, 'team', '.interpret.lock')), false);
-});
-
-test('timed-out interpretation is killed, reports an error and preserves active state', async () => {
-  const timeoutState = join(dir, 'timeout');
-  mkdirSync(timeoutState);
-  writeFileSync(join(timeoutState, 'shoemaker.conf'), 'APPLY_TIMEOUT=2h\n');
-  mkdirSync(join(timeoutState, 'team'));
-  const active = makeTeam();
-  writeFileSync(join(timeoutState, 'team', 'active.json'), JSON.stringify(active));
-  const service = new TeamService({ state: timeoutState, command: standin, timeoutMs: 80 });
-  service.apply([{ ...rows[0], description: 'Propose focused improvements. TIMEOUT' }]);
-  const snapshot = await settled(service);
-  assert.equal(snapshot.interpretation.status, 'failed');
-  assert.match(snapshot.interpretation.error, /timed out after 80 ms/);
-  assert.deepEqual(snapshot.active, active);
-  assert.equal(snapshot.proposed, null);
-  assert.equal(service.job, null);
-});
-
-test('Apply validates input before starting an interpreter', async () => {
-  for (const bad of [[], [{ ...rows[0], count: 0 }], [{ ...rows[0], count: 1.5 }], [{ ...rows[0], count: 17 }], [{ ...rows[0], shell: 'bad' }], [rows[0], rows[0]]]) {
-    assert.equal((await post('/team/apply', { rows: bad })).status, 400);
+test('invalid interpreter output and a failing interpreter keep everything waiting and say why', async () => {
+  for (const [marker, error] of [['INVALID OUTPUT', /capabilities/], ['RENAMED', /preserve every submitted id/], ['FAIL PROCESS', /synthetic interpreter failure/]]) {
+    const s = project({ active: makeTeam() });
+    const team = service(s);
+    team.add({ ...reviewer, description: `Review ideas. ${marker}` });
+    const record = await team.applyPending({ round: 'r1' });
+    assert.equal(record.status, 'failed');
+    assert.match(record.error, error);
+    assert.deepEqual(read(join(s, 'team', 'active.json')), makeTeam());
+    assert.equal(existsSync(join(s, 'team', '.interpret.lock')), false);
+    const { teamPage } = await import('../src/features/team.js');
+    assert.match(teamPage(team.status()), /round could not apply your changes \(.+\)\. They still wait for the next round/);
   }
-  assert.equal((await post('/team/apply', { rows, unexpected: true })).status, 400);
 });
 
-test('team mutation routes retain dashboard same-origin protection', async () => {
-  const response = await fetch(base + '/team/apply', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://example.invalid' }, body: JSON.stringify({ rows }),
+test('a missing interpreter reports failure and releases the lock', async () => {
+  const s = project();
+  const team = service(s, { command: join(dir, 'does-not-exist') });
+  team.add(reviewer);
+  const record = await team.applyPending();
+  assert.equal(record.status, 'failed');
+  assert.match(record.error, /Could not start interpreter/);
+  assert.equal(existsSync(join(s, 'team', '.interpret.lock')), false);
+});
+
+test('while a round applies the changes, the page waits and refuses new ones', async () => {
+  const team = new TeamService({ state, command: standin });
+  team.add({ ...reviewer, description: 'Review ideas. DELAY' });
+  const applying = team.applyPending({ round: 'r2' });
+  await pause(50);
+  assert.equal(getTeamService().status().applying, true);
+  const html = await page();
+  assert.match(html, /data-applying="1"/);
+  assert.match(html, /The round is applying your changes now/);
+  assert.match(html, /<button type="submit" class="primary" disabled>Add role/);
+  const refused = await post('/team/roles', { ...reviewer, name: 'Critic' });
+  assert.equal(refused.status, 409);
+  assert.match((await refused.json()).error, /applying your team changes/);
+  assert.equal((await applying).status, 'applied');
+  assert.equal(getTeamService().status().applying, false);
+  rmSync(join(state, 'team', 'active.json'));
+});
+
+test('a round that stopped mid-apply leaves a recoverable failure', () => {
+  const s = project();
+  mkdirSync(join(s, 'team', '.interpret.lock'));
+  writeFileSync(join(s, 'team', '.interpret.lock', 'owner.json'), JSON.stringify({ pid: 2147483647 }));
+  writeFileSync(join(s, 'team', 'last-apply.json'), JSON.stringify({ id: 'old', status: 'running', changes: [] }));
+  const snapshot = service(s).status();
+  assert.equal(snapshot.applying, false);
+  assert.match(snapshot.lastApply.error, /stopped while applying/);
+  assert.equal(existsSync(join(s, 'team', '.interpret.lock')), false);
+});
+
+test('a team back to exactly the default rows returns to the default flow without interpreting', async () => {
+  const s = project({ front: 'max_builds: 2\n' });
+  const team = service(s);
+  team.add(reviewer);
+  await team.applyPending();
+  assert.equal(existsSync(join(s, 'team', 'active.json')), true);
+  const offline = service(s, { command: join(dir, 'does-not-exist') });
+  offline.remove('reviewer');
+  const record = await offline.applyPending();
+  assert.equal(record.status, 'applied');
+  assert.equal(record.default, true);
+  assert.equal(existsSync(join(s, 'team', 'active.json')), false);
+  assert.equal(offline.status().isDefault, true);
+});
+
+test('an invalid active team stops rounds but stays editable', async () => {
+  const s = project({ active: makeTeam([{ id: 'ideas', name: 'Ideas', count: 17, description: 'Propose.' }]) });
+  const team = service(s);
+  const snapshot = team.status();
+  assert.match(snapshot.activeError, /MAX_AGENTS/);
+  const { teamPage } = await import('../src/features/team.js');
+  assert.match(teamPage(snapshot), /The saved team is not valid/);
+  team.edit('ideas', { name: 'Ideas', count: 3, description: 'Propose.' });
+  assert.equal((await team.applyPending()).status, 'applied');
+  assert.equal(team.status().activeError, null);
+});
+
+test('team marks: kept, edited, removed and added rows', () => {
+  const current = [{ id: 'a', name: 'A', count: 1, description: 'x' }, { id: 'b', name: 'B', count: 1, description: 'y' }];
+  assert.deepEqual(teamChanges(current, null).map((v) => v.change), [null, null]);
+  const view = teamChanges(current, [{ ...current[0], count: 2 }, { id: 'c', name: 'C', count: 1, description: 'z' }]);
+  assert.deepEqual(view.map((v) => [v.row.id, v.change]), [['a', 'edit'], ['b', 'remove'], ['c', 'add']]);
+  assert.equal(view[0].was.count, 1);
+});
+
+test('the page script adds a role, opens a row for editing and sends the edit as JSON', async () => {
+  const listeners = {};
+  const addListeners = {};
+  const field = (value) => ({ value, focus() {} });
+  const addForm = { addEventListener: (event, handler) => { addListeners[event] = handler; },
+    querySelector: (selector) => ({ '[type="submit"]': { disabled: false }, '[name="name"]': field('Reviewer'),
+      '[name="count"]': field('2'), '[name="description"]': field('Review ideas.') })[selector] };
+  const row = { hidden: false };
+  const editForm = { querySelector: (selector) => ({ '[type="submit"]': { disabled: false }, '[name="name"]': field('Suggestion'),
+    '[name="count"]': field('1'), '[name="description"]': field('UI first.') })[selector] };
+  const editor = { hidden: true, dataset: { teamForm: 'suggestion' }, querySelector: (selector) => editForm.querySelector(selector) };
+  editForm.closest = () => editor;
+  const page = { dataset: { applying: '0' }, addEventListener: (event, handler) => { listeners[event] = handler; },
+    querySelector: (selector) => (selector.includes('data-team-row') ? row : editor) };
+  const sent = [];
+  runInNewContext(readFileSync(join(root, 'public', 'team.js'), 'utf8'), {
+    document: { body: { dataset: { base: '/scratch' } }, querySelector: (selector) => ({ '#team-page': page, '#team-error': {}, '#team-add-form': addForm })[selector] },
+    CSS: { escape: (s) => s },
+    fetch: async (url, options) => { sent.push({ url, body: JSON.parse(options.body), type: options.headers['Content-Type'] }); return { ok: true, json: async () => ({}) }; },
+    location: { reload() {} },
   });
-  assert.equal(response.status, 403);
-});
-
-test('preview is revalidated at Confirm if the cap or proposal changes', async () => {
-  await post('/team/apply', { rows });
-  const snapshot = await settled();
-  writeFileSync(join(state, 'shoemaker.conf'), 'MAX_AGENTS=2\n');
-  assert.equal((await post('/team/confirm', { id: snapshot.interpretation.id })).status, 409);
-  rmSync(join(state, 'shoemaker.conf'));
-  const proposal = snapshot.proposed;
-  proposal.stages[0].roles[0].instructions = '';
-  writeFileSync(join(state, 'team', 'proposed.json'), JSON.stringify(proposal));
-  assert.equal((await post('/team/confirm', { id: snapshot.interpretation.id })).status, 409);
-});
-
-test('a stopped dashboard leaves a recoverable failed interpretation', () => {
-  const recoveryState = join(dir, 'recovery');
-  mkdirSync(join(recoveryState, 'team', '.interpret.lock'), { recursive: true });
-  writeFileSync(join(recoveryState, 'team', '.interpret.lock', 'owner.json'), JSON.stringify({ pid: 2147483647 }));
-  writeFileSync(join(recoveryState, 'team', 'interpretation.json'), JSON.stringify({ id: 'old', status: 'running' }));
-  const service = new TeamService({ state: recoveryState, command: standin });
-  assert.match(service.status().interpretation.error, /Dashboard stopped/);
-  assert.equal(existsSync(join(recoveryState, 'team', '.interpret.lock')), false);
-});
-
-test('a second dashboard cannot Apply, Confirm or Discard inside another mutation', () => {
-  const sharedState = join(dir, 'shared');
-  const first = new TeamService({ state: sharedState, command: standin });
-  const second = new TeamService({ state: sharedState, command: standin });
-  first.withLock(() => {
-    assert.equal(first.status().interpretation, null);
-    assert.throws(() => second.apply(rows), /already running/);
-    assert.throws(() => second.confirm('old'), /already running/);
-    assert.throws(() => second.discard('old'), /already running/);
-  });
-  assert.equal(existsSync(join(sharedState, 'team', '.interpret.lock')), false);
-});
-
-test('missing interpreter reports failure and releases the lock', async () => {
-  const missingState = join(dir, 'missing-command');
-  const service = new TeamService({ state: missingState, command: join(dir, 'does-not-exist') });
-  service.apply(rows);
-  const snapshot = await settled(service);
-  assert.equal(snapshot.interpretation.status, 'failed');
-  assert.match(snapshot.interpretation.error, /Could not start interpreter/);
-  assert.equal(existsSync(join(missingState, 'team', '.interpret.lock')), false);
-  assert.equal(service.job, null);
+  await addListeners.submit({ preventDefault() {} });
+  assert.deepEqual(sent[0], { url: '/scratch/team/roles', body: { name: 'Reviewer', count: 2, description: 'Review ideas.' }, type: 'application/json' });
+  const edit = { disabled: false, dataset: { teamEdit: 'suggestion' } };
+  listeners.click({ target: { closest: () => edit } });
+  assert.equal(row.hidden, true);
+  assert.equal(editor.hidden, false);
+  listeners.submit({ target: editForm, preventDefault() {} });
+  await pause(0);
+  assert.deepEqual(sent[1], { url: '/scratch/team/roles/suggestion', body: { name: 'Suggestion', count: 1, description: 'UI first.' }, type: 'application/json' });
 });
 
 test('shared validation permits custom stages and review authority, but rejects unknown fields and powers', () => {
-  const team = makeTeam([{ name: 'Reviewers', count: 2, description: 'review and approve useful ideas' }]);
+  const team = makeTeam([{ id: 'reviewers', name: 'Reviewers', count: 2, description: 'review and approve useful ideas' }]);
   const role = team.stages[0].roles[0];
   role.capabilities = ['review', 'report'];
   role.authority = 'approve';
@@ -403,6 +423,8 @@ test('shared validation permits custom stages and review authority, but rejects 
     (t) => { t.stages[0].id = '../outside'; },
     (t) => { t.stages[0].roles[0].model = '--bad-flag'; },
     (t) => { t.stages[0].roles[0].effort = 'unbounded'; },
+    (t) => { t.stages[0].roles[0].builtin = 'suggest'; },
+    (t) => { t.stages[0].roles[0].builtin = 'shell'; },
   ]) {
     const copy = structuredClone(team);
     change(copy);
@@ -410,35 +432,53 @@ test('shared validation permits custom stages and review authority, but rejects 
   }
 });
 
+test('built-in roles keep their capability, advisory authority and a single Suggestion agent', () => {
+  const builtins = makeTeam([
+    { id: 'suggestion', name: 'Suggestion', count: 1, description: 'Ideas.', builtin: 'suggest' },
+    { id: 'implementation', name: 'Implementation', count: 2, description: 'Build.', builtin: 'implement', capabilities: ['build'] },
+  ]);
+  assert.deepEqual(validateTeam(builtins), builtins);
+  for (const change of [
+    (t) => { t.stages[0].roles[0].count = 2; },
+    (t) => { t.stages[0].roles[1].capabilities = ['propose']; },
+    (t) => { t.stages[0].roles[1].builtin = 'suggest'; },
+  ]) {
+    const copy = structuredClone(builtins);
+    change(copy);
+    assert.throws(() => validateTeam(copy));
+  }
+});
+
 test('shared validation preserves the submitted roles and applies the cap', () => {
   const team = makeTeam();
+  const rows = [{ id: 'ideas', name: 'Ideas', count: 3, description: 'Propose focused improvements.' }];
   assert.deepEqual(validateTeam(team, { rows }), team);
   assert.throws(() => validateTeam(team, { rows: [{ ...rows[0], count: 4 }] }), /preserve/);
+  assert.throws(() => validateTeam(team, { rows: [{ ...rows[0], id: 'other' }] }), /preserve/);
+  assert.throws(() => validateTeam(team, { rows: [{ ...rows[0], builtin: 'suggest', count: 1 }] }), /preserve/);
   assert.throws(() => validateTeam(team, { maxAgents: 2 }), /MAX_AGENTS/);
   assert.throws(() => validateRows([{ ...rows[0], count: '3' }]), /integer/);
-  assert.deepEqual(readTeamSettings(dir), { maxAgents: 16, model: '', effort: '', applyModel: '', applyEffort: '', applyTimeout: '5m' });
+  assert.throws(() => validateRows([rows[0], { ...rows[0], name: 'Other' }]), /duplicate role id/);
+  assert.deepEqual(readTeamSettings(dir), { maxAgents: 16, model: '', effort: '', suggestModel: '', suggestEffort: '', maxBuilds: 1,
+    applyModel: '', applyEffort: '', applyTimeout: '5m' });
 });
 
 test('blank DIRECTION model and effort inherit defaults without consuming following fields', () => {
   const defaults = join(dir, 'defaults');
   mkdirSync(defaults);
-  writeFileSync(join(defaults, 'DIRECTION.md'), '---\nmodel:\neffort:\nsuggest_model: haiku\n---\n');
-  assert.deepEqual(readTeamSettings(defaults), { maxAgents: 16, model: '', effort: '', applyModel: '', applyEffort: '', applyTimeout: '5m' });
+  writeFileSync(join(defaults, 'DIRECTION.md'), '---\nmodel:\neffort:\nsuggest_model: haiku\nmax_builds: 2\n---\n');
+  assert.deepEqual(readTeamSettings(defaults), { maxAgents: 16, model: '', effort: '', suggestModel: 'haiku', suggestEffort: '', maxBuilds: 2,
+    applyModel: '', applyEffort: '', applyTimeout: '5m' });
 });
 
-test('team page escapes generated text and unavailable state gives a useful message', async () => {
+test('the team page escapes generated text, and an unavailable state says what to set', async () => {
   const { teamPage } = await import('../src/features/team.js');
-  const snapshot = getTeamService().status();
-  const team = makeTeam();
-  team.stages[0].roles[0].instructions = '<script>bad()</script>';
-  const html = teamPage({ ...snapshot, active: team, proposed: null });
+  const s = project({ active: makeTeam([{ id: 'ideas', name: '<b>Ideas</b>', count: 1, description: 'Propose.', instructions: '<script>bad()</script>' }]) });
+  const html = teamPage(service(s).status());
   assert.ok(html.includes('&lt;script&gt;bad()&lt;/script&gt;'));
+  assert.ok(html.includes('&lt;b&gt;Ideas&lt;/b&gt;'));
   assert.ok(!html.includes('<script>bad()'));
-  const legacy = teamPage({ ...snapshot, interpretation: { status: 'ready' } });
-  assert.match(legacy, /id="team-status">Preview ready\.[^<]*confirming\.<\/p>/);
-  const recorded = teamPage({ ...snapshot, interpretation: { status: 'ready', model: '<script>bad()</script>', effort: 'high' } });
-  assert.ok(recorded.includes('Model: &lt;script&gt;bad()&lt;/script&gt;; effort: high.'));
   const unavailable = new TeamService().status();
   assert.match(teamPage(unavailable), /Set SHOEMAKER_STATE/);
-  assert.throws(() => new TeamService().apply(rows), /SHOEMAKER_STATE/);
+  assert.throws(() => new TeamService().add(reviewer), /SHOEMAKER_STATE/);
 });

@@ -21,6 +21,8 @@
 # The approver uses SUGGEST_TIMEOUT and one MAX_AGENTS slot, even with a team.
 # Its approve_model/approve_effort fall back to model/effort and Claude defaults.
 # Before them, the runner marks the items whose PR has merged or closed.
+# First of all, the dashboard's waiting changes take effect (round-start.mjs):
+# Direction notes rewrite DIRECTION.md's Focus, and team changes the team.
 #
 # Settings: shoemaker.conf (project, host, gate, commands) and DIRECTION.md's front
 # matter. Model and effort: --model/--effort, else DIRECTION.md, else
@@ -108,7 +110,13 @@ while [ -e "$STATE/runs/$run_id" ] || grep -q "^### $run_id[- ]" "$LEDGER" 2>/de
 RUN_DIR="$STATE/runs/$run_id"; mkdir -p "$RUN_DIR"; RUNLOG="$RUN_DIR/run.log"
 say "round $run_id: mode $mode${mode_override:+ (override)}${only:+, only $only}, dry-run $dry_run"
 
-# Snapshot once: confirmation can replace active.json while this round is running.
+# Waiting Direction notes and team changes take effect before anything below
+# reads the team or quotes DIRECTION.md. A failure is logged; both stay waiting.
+if [ "$dry_run" = 1 ]; then rs_arg=--dry-run; else rs_arg="$run_id"; fi
+SHOEMAKER_STATE="$STATE" node "$SHOEMAKER_HOME/dashboard/bin/round-start.mjs" "$rs_arg" 2>&1 \
+  | while IFS= read -r l; do say "$l"; done
+
+# Snapshot once: the next round's changes can replace active.json while this one runs.
 case "$MAX_AGENTS" in ""|*[!0-9]*) die "MAX_AGENTS must be a positive whole number" ;; esac
 [ "$MAX_AGENTS" -ge 1 ] && [ "$MAX_AGENTS" -le 128 ] || die "MAX_AGENTS must be from 1 to 128"
 team_active=0
@@ -428,6 +436,52 @@ EOF
   return "$rc"
 }
 
+# --- the suggestion agent -------------------------------------------------------------------
+# It may add per_round ideas while fewer than max_waiting wait for the human.
+suggest_room() {
+  waiting="$(Q stats --json | jq -r '.proposed')"
+  room=$(( max_waiting - waiting )); [ "$room" -lt 0 ] && room=0
+  ideas=$(( per_round < room ? per_round : room ))
+}
+# write_suggest_prompt [focus]: into $S_DIR. A team's built-in Suggestion role
+# passes the focus its description adds to SUGGEST.md.
+write_suggest_prompt() {
+  mkdir -p "$S_DIR"
+  {
+    printf '# Shoemaker round %s: suggestion agent\n\n' "$run_id"
+    printf -- '- you may add: **up to %s idea(s)** this round (%s wait for the human'"'"'s review; max_waiting is %s)\n' "$ideas" "$waiting" "$max_waiting"
+    printf -- '- model: %s; effort: %s\n' "${s_model:-Claude Code default}" "${s_effort:-Claude Code default}"
+    printf -- '- your checkout (read-only; %s `%s`): `%s`\n' "$base" "$base_sha" "$S_WT"
+    common_paths
+    printf -- '- run directory, for your idea files and summary.md: `%s`\n' "$S_DIR"
+    printf -- '- deadline: %s (the process is killed then)\n' "$(deadline "$SUGGEST_TIMEOUT")"
+    [ -n "$notes" ] && printf -- '- notes:%s\n' "$notes"
+    printf '\n'
+    [ -n "${1:-}" ] && printf '## Your role on the team\n\n%s\n\n' "$1"
+    cat "$HARNESS/SUGGEST.md"
+    quoted_files
+  } > "$S_DIR/prompt.md"
+}
+
+run_suggest() {
+  local rc started added args=()
+  while IFS= read -r -d '' a; do args+=("$a"); done < <(model_args "$s_model" "$s_effort")
+  gitl -C "$REPO" worktree add -q --detach "$S_WT" "$base" >>"$RUNLOG" 2>&1 || { say "suggest: git worktree add $S_WT failed"; return 1; }
+  gitl -C "$REPO" worktree lock --reason "shoemaker round $run_id (pid $$)" "$S_WT"
+  guard_worktree "$S_WT" suggest || { gitl -C "$REPO" worktree unlock "$S_WT"; cleanup_worktree "$S_WT"; return 1; }
+  say "suggest: starting claude (model ${s_model:-default}, effort ${s_effort:-default}, timeout $SUGGEST_TIMEOUT)"
+  started="$(date +%s)"
+  agent "$SUGGEST_TIMEOUT" "$S_WT" "suggestion agent" -p "$(cat "$S_DIR/prompt.md")" \
+    --name "shoemaker-$PROJECT-$run_id-suggest" "${args[@]}" >"$S_DIR/transcript.jsonl" 2>"$S_DIR/stderr.log"
+  rc=$?
+  result_stats "$S_DIR"
+  added="$(Q list --json | jq -r --arg r "$run_id" '[.[] | select(.run_id == $r) | "#\(.id)"] | join(", ")')"
+  say "suggest: claude exited $rc after $(( ($(date +%s) - started) / 60 )) min; added: ${added:-nothing}; ${stats:-no result event}"
+  [ -f "$S_DIR/summary.md" ] || say "suggest: WARNING: no summary.md"
+  gitl -C "$REPO" worktree unlock "$S_WT" 2>/dev/null || true
+  cleanup_worktree "$S_WT"
+}
+
 # --- decide what runs ------------------------------------------------------------------
 deadline() { date -d "now + $(sed -E 's/h$/ hours/; s/m$/ minutes/; s/s$/ seconds/' <<<"$1")" '+%F %T %Z' 2>/dev/null || echo "in $1"; }
 
@@ -444,9 +498,7 @@ if [ "$team_active" = 1 ] && [ "$only" != approve ]; then
   exit $?
 fi
 
-waiting="$(Q stats --json | jq -r '.proposed')"
-room=$(( max_waiting - waiting )); [ "$room" -lt 0 ] && room=0
-ideas=$(( per_round < room ? per_round : room ))
+suggest_room
 want_suggest=0
 if [ "$only" = implement ] || [ "$only" = approve ]; then say "suggestion agent: not this round (--only $only)"
 elif [ "$ideas" -eq 0 ]; then say "suggestion agent: not this round ($waiting waiting for your review; max_waiting is $max_waiting)"
@@ -482,49 +534,14 @@ fi
 if [ "$want_suggest" = 0 ] && [ "$want_impl" = 0 ] && [ "$want_approve" = 0 ]; then
   [ "$dry_run" = 1 ] && { say "dry run: no agent would start"; exit 0; }
   # An idle round leaves one line, not a run directory.
-  { printf '%s ' "$run_id"; grep -E 'not this round|queue: #' "$RUNLOG" | sed 's/^.*\]: //' | paste -sd';' -; } >>"$STATE/runs/idle.log"
+  { printf '%s ' "$run_id"; grep -E 'not this round|queue: #|direction: |team: ' "$RUNLOG" | sed 's/^.*\]: //' | paste -sd';' -; } >>"$STATE/runs/idle.log"
   rm -rf "$RUN_DIR"
   find "$STATE/runs" -mindepth 1 -maxdepth 1 -type d -mtime +"$KEEP_DAYS" -exec rm -rf {} + 2>/dev/null
   exit 0
 fi
 
-# --- the suggestion agent (in the background) --------------------------------------------
 S_DIR="$RUN_DIR/suggest" S_WT="$WT_ROOT/$run_id-suggest" suggest_pid=""
-if [ "$want_suggest" = 1 ]; then
-  mkdir -p "$S_DIR"
-  {
-    printf '# Shoemaker round %s: suggestion agent\n\n' "$run_id"
-    printf -- '- you may add: **up to %s idea(s)** this round (%s wait for the human'"'"'s review; max_waiting is %s)\n' "$ideas" "$waiting" "$max_waiting"
-    printf -- '- model: %s; effort: %s\n' "${s_model:-Claude Code default}" "${s_effort:-Claude Code default}"
-    printf -- '- your checkout (read-only; %s `%s`): `%s`\n' "$base" "$base_sha" "$S_WT"
-    common_paths
-    printf -- '- run directory, for your idea files and summary.md: `%s`\n' "$S_DIR"
-    printf -- '- deadline: %s (the process is killed then)\n' "$(deadline "$SUGGEST_TIMEOUT")"
-    [ -n "$notes" ] && printf -- '- notes:%s\n' "$notes"
-    printf '\n'
-    cat "$HARNESS/SUGGEST.md"
-    quoted_files
-  } > "$S_DIR/prompt.md"
-fi
-
-run_suggest() {
-  local rc started added args=()
-  while IFS= read -r -d '' a; do args+=("$a"); done < <(model_args "$s_model" "$s_effort")
-  gitl -C "$REPO" worktree add -q --detach "$S_WT" "$base" >>"$RUNLOG" 2>&1 || { say "suggest: git worktree add $S_WT failed"; return 1; }
-  gitl -C "$REPO" worktree lock --reason "shoemaker round $run_id (pid $$)" "$S_WT"
-  guard_worktree "$S_WT" suggest || { gitl -C "$REPO" worktree unlock "$S_WT"; cleanup_worktree "$S_WT"; return 1; }
-  say "suggest: starting claude (model ${s_model:-default}, effort ${s_effort:-default}, timeout $SUGGEST_TIMEOUT)"
-  started="$(date +%s)"
-  agent "$SUGGEST_TIMEOUT" "$S_WT" "suggestion agent" -p "$(cat "$S_DIR/prompt.md")" \
-    --name "shoemaker-$PROJECT-$run_id-suggest" "${args[@]}" >"$S_DIR/transcript.jsonl" 2>"$S_DIR/stderr.log"
-  rc=$?
-  result_stats "$S_DIR"
-  added="$(Q list --json | jq -r --arg r "$run_id" '[.[] | select(.run_id == $r) | "#\(.id)"] | join(", ")')"
-  say "suggest: claude exited $rc after $(( ($(date +%s) - started) / 60 )) min; added: ${added:-nothing}; ${stats:-no result event}"
-  [ -f "$S_DIR/summary.md" ] || say "suggest: WARNING: no summary.md"
-  gitl -C "$REPO" worktree unlock "$S_WT" 2>/dev/null || true
-  cleanup_worktree "$S_WT"
-}
+[ "$want_suggest" = 1 ] && write_suggest_prompt
 
 # --- the implementation agents (side by side, one per picked item) -----------------------
 # Build <i> of this round: item #id, its own run id ($run_id-q<id>, which heads its

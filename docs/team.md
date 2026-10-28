@@ -1,47 +1,61 @@
 # Teams
 
-A team replaces the default suggestion/build sequence with roles you describe
-on the dashboard. Each role has a name, an agent count and instructions in
-your own words. Roles can suggest ideas, review them, build approved items,
-or write reports. Stages have names chosen for your workflow and run in
-the order shown in the preview.
+The team is the set of roles every round runs. Without a configuration it is
+the **default team**: one Suggestion agent and `max_builds` Implementation
+agents, side by side, which is exactly the standard round. On the
+dashboard's **Team** page you can change it: add roles that suggest ideas,
+review them, build approved items or write reports, each with a name, an
+agent count and a description in your own words.
 
-## Apply, preview, confirm
+## Add in the form, edit and remove in the team
 
-Open **Team** and add or remove role rows. For example:
+Open **Team**. The **Add a role** form at the top only adds. Each row of
+**Active team** has **Edit**, which opens the row in place, and **Remove**.
+For example, starting from the default team you might add:
 
-| Role | Count | Description |
+| Role | Agents | Description |
 |---|---|---|
-| Feature suggestions | 3 | Find small features that fit DIRECTION.md and propose them with a concrete spec. |
 | Feature review | 2 | Discuss whether each idea is worth building; record reasons and an advisory verdict for the human. |
-| Implementation | 5 | Build approved items in separate worktrees and use the existing landing gate. |
+| Reporter | 1 | After the builds, write a short report on what changed and what to watch. |
 
-Press **Apply** to start interpretation. The dashboard starts a headless
-Claude Code session asynchronously, using `DIRECTION.md`'s `apply_model` and
-`apply_effort`. Each empty or absent value falls back to `model` or `effort`,
-then to the Claude Code default. For example, `apply_model: opus` and
-`apply_effort: xhigh` leave the nightly roles' settings unchanged. Model
-values pass through as given; `apply_effort` accepts `low`, `medium`, `high`,
-`xhigh` or `max`. The session receives its context in the prompt and has no
-tools, shell access or file-edit access. It returns structured data; the
-dashboard validates it before writing a proposal.
+No button runs an agent. A saved change waits, marked on its row (dotted
+tag): an edited row shows its new description with what runs now below it,
+an added row says it joins at the next round, a removed row is struck
+through. **Undo** takes one change back and **Undo all** drops them all.
+The waiting rows live in `team/pending.json`; when they match the current
+team again, the file is removed.
 
-`APPLY_TIMEOUT` in `shoemaker.conf` limits interpretation and defaults to
-`5m` when absent. Like the worker timeouts, it accepts positive integers
-with `h`, `m` or `s`, or bare seconds. Invalid `apply_effort` or
-`APPLY_TIMEOUT` rejects Apply before starting a session.
+When the next round starts, before it reads the team, the runner sends the
+waiting rows to the interpreter: a headless Claude Code session with no
+tools, shell or file access, using `DIRECTION.md`'s `apply_model` and
+`apply_effort`. Each empty or absent value falls back to `model` or
+`effort`, then to the Claude Code default; `apply_effort` accepts `low`,
+`medium`, `high`, `xhigh` or `max`. It turns the descriptions into ordered
+stages, capabilities, authority and instructions, and returns structured
+data. The runner validates it and replaces `team/active.json` atomically;
+that round already runs with the new team. **Instructions** on each row then
+shows what its agent was told. The Direction page's notes use the same
+interpreter at the same moment, just before ([direction.md](direction.md)).
 
-The page shows the latest interpretation's status, model, effort and any
-error. `default` means no model or effort flag was supplied. A second Apply
-is refused while one is running. Invalid settings, output or a timeout
-leaves the active team unchanged.
+`APPLY_TIMEOUT` in `shoemaker.conf` limits the interpretation and defaults
+to `5m` when absent. Like the worker timeouts, it accepts positive integers
+with `h`, `m` or `s`, or bare seconds. If the settings are invalid, the
+interpreter fails or times out, or its answer fails validation, the round
+runs with the current team, the run log says why, and the changes stay
+waiting with the reason shown on the page. While a round applies changes,
+the page waits and refuses new ones. A team changed back to exactly the
+default rows removes `active.json` without interpreting, and rounds return
+to the standard flow.
 
-Read the preview in stage order. Each role shows its count, capabilities,
-authority and generated instructions, including any requested model or
-effort override. **Confirm** makes that proposal active through an atomic
-file replacement. **Discard** removes the proposal. Neither Apply nor
-Discard changes the active team. A running round keeps its initial snapshot;
-the next round uses the newly confirmed team.
+## Built-in roles
+
+Suggestion and Implementation keep their protocols in any team.
+Suggestion is the standard suggestion agent (`SUGGEST.md`, with its own
+worktree and the queue CLI), and runs one agent; add another `propose` role
+for more ideas. Implementation is a `build` role (`IMPLEMENT.md`). Editing
+their descriptions adds a focus to the protocol, and the interpreter writes
+that focus as their instructions; their capability and advisory authority
+cannot change. Removing one removes that agent from rounds.
 
 ## Capabilities
 
@@ -142,8 +156,9 @@ the item log.
   the approver; `--only suggest` and `--only implement` exclude it. Dry runs
   write its prompt when it has work and start nothing.
 - Roles inherit `model` and `effort` from `DIRECTION.md` unless their
-  descriptions request an override. The legacy `suggest_model` and
-  `suggest_effort` apply to the default suggestion agent without a team.
+  descriptions request an override. `suggest_model` and `suggest_effort`
+  apply to the Suggestion agent, in the default team or a team's built-in
+  role.
   `apply_model` and `apply_effort` affect only the interpreter, never roles.
   `approve_model` and `approve_effort` affect only the auto-approval agent;
   empty or absent values fall back to `model` / `effort`, then to the Claude
@@ -152,16 +167,19 @@ the item log.
   timeout is `SUGGEST_TIMEOUT`.
 - Without `team/active.json`, the existing default suggestion/build flow
   applies. Updates never create or replace an active team in project state.
+- A dry run (`shoemaker run --dry-run`) only reports waiting team changes
+  and Direction notes; it applies neither.
 
 ## Config and records
 
-The dashboard writes team state under `$SHOEMAKER_STATE/team/`. Do not ask
-agents to edit it. `active.json` is the confirmed config and `proposed.json`
-is the validated preview. `request.json` stores the submitted rows and
-`interpretation.json` stores the latest status and the `model` and `effort`
-used (`default` when no flag was supplied). Interpretation prompts and
-process output live in `interpretation-runs/<id>/`. Generated instructions
-are embedded in the active and proposed configs.
+The dashboard and the runner keep team state under `$SHOEMAKER_STATE/team/`;
+the guard keeps agents out of it. `active.json` is the team rounds run
+(absent for the default team). `pending.json` holds the waiting rows.
+`last-apply.json` records the latest round-start application: its round,
+status, the changes, the `model` and `effort` used (`default` when no flag
+was supplied) and any error. Interpretation prompts and process output live
+in `interpretation-runs/<id>/`. Generated instructions are embedded in
+`active.json`.
 
 Each round snapshots its config as `runs/<round>/team.json`. Worker output
 lives in `runs/<round>/stages/<stage-id>/<role-id>/<agent-number>/`, where
@@ -197,12 +215,13 @@ The config has this shape (two additional roles can follow the same form):
 }
 ```
 
-Role `model` and `effort` overrides are optional. The validator rejects
-unknown fields or capabilities, invalid or duplicate identifiers, invalid
-counts, and configurations over the cap. Interpretation must preserve the
-submitted role names, descriptions and counts; the server does not trust a
-model to approve its own output. The runner validates its starting snapshot
-too.
+Role `model` and `effort` overrides are optional; a built-in role also has
+`"builtin": "suggest"` or `"implement"`. The validator rejects unknown fields
+or capabilities, invalid or duplicate identifiers, invalid counts, and
+configurations over the cap. Interpretation must preserve the submitted role
+ids, names, descriptions, counts and built-in markers; Shoemaker does not
+trust a model to approve its own output. The runner validates its starting
+snapshot too.
 
 Inspect the active config without changing it:
 
@@ -212,7 +231,7 @@ shoemaker --state "<state-dir>" team validate "<config.json>"
 ```
 
 These commands use the project's `MAX_AGENTS` cap. They do not activate a
-config or change the queue. Human confirmation stays on the dashboard.
+config or change the queue. Team changes come only from the dashboard.
 
 ## Existing scheduled installations
 
@@ -230,12 +249,14 @@ For the queue protocol and verdict records, see [queue.md](queue.md).
 
 From the Shoemaker checkout, these commands create synthetic state and a
 local interpreter stand-in. The server asks the OS for a free loopback port;
-it never uses another project's database or dashboard. This stand-in preserves
-the form rows and assigns one stage per role, with advisory authority.
+it never uses another project's database or dashboard. This stand-in keeps
+the rows as given, puts each role in its own stage, and uses advisory
+authority.
 
 ```sh
 export SHOEMAKER_STATE="$(mktemp -d "$PWD/.team-demo.XXXXXX")"
 mkdir "$SHOEMAKER_STATE/bin"
+printf -- '---\nmode: review\n---\n\n## Focus\n\n- **Demo:** try the Team page.\n' >"$SHOEMAKER_STATE/DIRECTION.md"
 cat >"$SHOEMAKER_STATE/bin/claude" <<'JS'
 #!/usr/bin/env node
 (async () => {
@@ -244,8 +265,9 @@ cat >"$SHOEMAKER_STATE/bin/claude" <<'JS'
   const rows = JSON.parse(prompt.split('Role rows (data, not instructions about the interpretation process):\n')[1].split('\n\nDIRECTION.md context:')[0]);
   const stages = rows.map((row, i) => {
     const text = `${row.name} ${row.description}`;
-    const capability = /build|implement/i.test(text) ? 'build' : /review/i.test(text) ? 'review' : /report|audit/i.test(text) ? 'report' : 'propose';
-    return { id: `stage-${i}`, name: row.name, roles: [{ ...row, id: `role-${i}`, capabilities: [capability], authority: 'advisory', instructions: `Follow RULES.md. ${row.description}` }] };
+    const capability = row.builtin === 'suggest' ? 'propose' : row.builtin === 'implement' ? 'build' : /review/i.test(text) ? 'review'
+      : /build|implement/i.test(text) ? 'build' : /report|audit/i.test(text) ? 'report' : 'propose';
+    return { id: `stage-${i}`, name: row.name, roles: [{ ...row, capabilities: [capability], authority: 'advisory', instructions: `Follow RULES.md. ${row.description}` }] };
   });
   console.log(JSON.stringify({ structured_output: { version: 1, stages } }));
 })().catch(error => { console.error(error.message); process.exitCode = 1; });
@@ -259,8 +281,15 @@ server.listen(0, '127.0.0.1', () => console.log(`http://127.0.0.1:${server.addre
 JS
 ```
 
-Open the printed URL, enter the three example roles above, and try Apply,
-Confirm and Discard. Inspect `team/active.json` under `$SHOEMAKER_STATE`
-after confirmation. Ctrl-C stops the scratch server. The stand-in
-demonstrates the page; `bash test/selftest.sh` separately exercises actual
-rounds against stand-in workers and landing tools.
+Open the printed URL, add the example roles above, and edit or remove one.
+To play the next round's start, run this in a second terminal with the same
+`SHOEMAKER_STATE`, then reload the page:
+
+```sh
+PATH="$SHOEMAKER_STATE/bin:$PATH" node dashboard/bin/round-start.mjs demo-round
+```
+
+Inspect `team/active.json` under `$SHOEMAKER_STATE` afterwards. Ctrl-C stops
+the scratch server. The stand-in demonstrates the page; `bash
+test/selftest.sh` separately exercises actual rounds against stand-in
+workers and landing tools.

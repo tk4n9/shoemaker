@@ -1,24 +1,26 @@
 ---
-# Read by the runner every round and the dashboard on Apply. Edit freely.
+# Read by the runner every round and by the dashboard. Edit freely.
 enabled: true    # false: the timer still fires, but the round exits at once
 mode: suggest    # suggest | review | ship  (see the README in this folder)
 model:           # opus | sonnet | fable | haiku, or a full model id; empty = your Claude Code default
 effort:          # low | medium | high | xhigh | max; empty = your Claude Code default
-suggest_model:   # the suggestion agent's model; empty = same as model
-suggest_effort:  # the suggestion agent's effort; empty = same as effort
+suggest_model:   # the Suggestion agent's model; empty = same as model
+suggest_effort:  # the Suggestion agent's effort; empty = same as effort
 approve_model:   # the optional auto-approval agent's model; empty = same as model
 approve_effort:  # the optional auto-approval agent's effort; empty = same as effort
-apply_model:     # the team interpreter's model; empty = same as model
-apply_effort:    # the team interpreter's effort; empty = same as effort
+apply_model:     # the interpreter's model (Team changes, Direction notes); empty = same as model
+apply_effort:    # the interpreter's effort; empty = same as effort
 max_waiting: 5   # the suggestion agent adds ideas only while fewer than this many wait for your review
 per_round: 3     # at most this many new ideas in one round
-max_builds: 1    # without a team: parallel builds; confirmed team build counts replace this
+max_builds: 1    # the default team's parallel builds; a changed team's build counts replace this
 ---
 
 # Direction
 
 Human-owned. All agents read this file every round; none edits it.
-A confirmed dashboard team replaces the default roles and their counts.
+The dashboard's Direction page turns your notes into the Focus bullets at
+the start of a round; you can also edit them here. A team changed on the
+Team page replaces the default roles and their counts.
 Team reviewer authority can screen or approve ideas; mode still limits builds.
 Auto approval is off by default; enable it with the switch on the Todos page.
 

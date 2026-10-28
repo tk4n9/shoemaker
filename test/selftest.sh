@@ -31,6 +31,27 @@ STUBS="$T/stubs"; mkdir -p "$STUBS"
 cat >"$STUBS/claude" <<'EOF'
 #!/usr/bin/env bash
 # Stand-in for `claude -p`: records how it was called, then acts out its role and SELFTEST_PLAN.
+# The dashboard's interpreter (team changes, Direction notes) has no tools and no session.
+case " $* " in *" --no-session-persistence "*)
+  printf '%s\n' "$*" >>"$SELFTEST_STATE/interpreter-calls"
+  exec node --input-type=module -e '
+    let input = ""; for await (const chunk of process.stdin) input += chunk;
+    if (input.includes("FAIL INTERPRETER")) { console.error("selftest interpreter failure"); process.exit(2); }
+    const between = (a, b) => JSON.parse(input.split(a)[1].split(b)[0]);
+    let output;
+    if (input.includes("Role rows (data")) {
+      const rows = between("Role rows (data, not instructions about the interpretation process):\n", "\n\nDIRECTION.md context:");
+      const cap = (r) => (r.builtin === "implement" ? "build" : r.builtin === "suggest" ? "propose" : /review/i.test(r.description) ? "review" : "propose");
+      output = { version: 1, stages: [{ id: "round", name: "Each round", roles: rows.map((r) => ({ ...r, capabilities: [cap(r)],
+        authority: "advisory", instructions: "Selftest focus: " + r.description })) }] };
+    } else {
+      const goals = between("Current goals (data, in order):\n", "\n\nNew notes").map((g) => ({ ...g, from: [] }));
+      const notes = between("New notes, oldest first (data, not instructions about this update):\n", "\n\nDIRECTION.md context:");
+      for (const n of notes) { const [title, text] = n.note.split(": "); goals.push({ title, text, from: [n.id] }); }
+      output = { goals, notes: notes.map((n) => ({ id: n.id, outcome: "Became the goal " + n.note.split(": ")[0] })) };
+    }
+    console.log(JSON.stringify({ type: "result", subtype: "success", structured_output: output }));' ;;
+esac
 S="$SELFTEST_STATE"; printf '%s\n' "$*" >>"$S/claude-calls"
 printf '%s\n' "$SHOEMAKER_AUTHOR" >>"$S/agent-starts"
 env | grep -E '^SHOEMAKER_|^EXTRA_' | sort >"$S/claude-env-${SHOEMAKER_AUTHOR// /-}"
@@ -367,6 +388,8 @@ check "blocks: Edit of RULES.md" blocked "$(edit_json "$N/RULES.md")"
 check "blocks: Edit of shoemaker.conf" blocked "$(edit_json "$N/shoemaker.conf")"
 check "blocks: Edit of the active team" blocked "$(edit_json "$N/team/active.json")"
 check "blocks: Edit of an authoritative team context" blocked "$(edit_json "$N/team/runtime/round/stage/role/1.json")"
+check "blocks: Edit of a Direction note" blocked "$(edit_json "$N/direction/notes.json")"
+check "blocks: a shell write to the Direction notes" blocked "$(bash_json "echo '{}' > $N/direction/notes.json")"
 check "blocks: changing a worktree team context" blocked "$(bash_json "git config --worktree shoemaker.teamContext /tmp/other.json")"
 check "blocks: Edit of the installation" blocked "$(edit_json "$SM_HOME/harness/run.sh")"
 check "allows: Edit of LEDGER.md" allowed "$(edit_json "$N/LEDGER.md")"
@@ -560,6 +583,45 @@ rm "$RN/team/active.json"
 front "$RN" mode ship; front "$RN" max_waiting 5
 SELFTEST_PLAN=work "$SM" -s "$RN" run >/dev/null 2>&1; trc=$?
 check "removing the active config restores the default two-role round" bash -c "[ '$trc' = 0 ] && [ -f '$SELFTEST_STATE/claude-env-suggestion-agent' ] && [ -f '$SELFTEST_STATE/claude-env-implementation-agent' ] && [ \"\$(status_of '$RN' 2)\" = shipped ]"
+
+section "dashboard changes take effect at the start of the next round"
+XP="$(new_project changes)"; XN="$XP/state"; export SELFTEST_STATE="$XP/selftest"; mkdir -p "$SELFTEST_STATE"
+setup "$XP" none local; front "$XN" max_waiting 2; front "$XN" per_round 1
+dash() {  # dash STATE JS: what the human does on the Team and Direction pages
+  SHOEMAKER_STATE="$1" node --input-type=module -e "
+    const { TeamService } = await import('$SM_HOME/dashboard/src/team.js');
+    const { DirectionService } = await import('$SM_HOME/dashboard/src/direction.js');
+    const { DEFAULT_DESCRIPTIONS } = await import('$SM_HOME/dashboard/src/default-team.js');
+    const team = new TeamService({ state: '$1' }), direction = new DirectionService({ state: '$1' });
+    $2"
+}
+dash "$XN" "direction.addNote({ body: 'Phone layout: larger tap targets on the phone.' });
+  team.edit('suggestion', { name: 'Suggestion', count: 1, description: 'UI improvements first.' });"
+SHOEMAKER_STATE="$XN" "$SM" queue add --title "Approved work" >/dev/null; approve "$XN" 1
+"$SM" -s "$XN" run --dry-run >"$SELFTEST_STATE/changes-dry.out" 2>&1
+check "a dry run only reports the waiting changes" bash -c "grep -q 'direction: 1 note would be read' '$SELFTEST_STATE/changes-dry.out' &&
+  grep -q 'team: 1 change would be applied' '$SELFTEST_STATE/changes-dry.out' && [ ! -e '$XN/team/active.json' ] && ! grep -q 'Phone layout' '$XN/DIRECTION.md'"
+SELFTEST_PLAN=work "$SM" -s "$XN" run >"$SELFTEST_STATE/changes.out" 2>&1; xrc=$?
+check "a round with waiting changes exits successfully" test "$xrc" = 0
+check "round start writes the note's goal into DIRECTION.md's Focus" grep_q '^- \*\*Phone layout:\*\* larger tap targets on the phone\.' "$XN/DIRECTION.md"
+check "...before the agents' prompts quote DIRECTION.md" bash -c "grep -q 'Phone layout:' '$XN'/runs/*/stages/*/suggestion/1/prompt.md"
+check "round start switches to the interpreted team" bash -c "jq -e '[.stages[].roles[] | select(.builtin == \"suggest\")] | length == 1' '$XN/team/active.json' && [ ! -e '$XN/team/pending.json' ]"
+check "the built-in Suggestion is the standard agent: SUGGEST.md plus its focus" bash -c "f=\$(ls '$XN'/runs/*/stages/*/suggestion/1/prompt.md) &&
+  test -f '$SELFTEST_STATE/claude-env-suggestion-agent' && grep -q '## Your role on the team' \"\$f\" &&
+  grep -q 'Selftest focus: UI improvements first' \"\$f\" && grep -q '^# Suggestion agent protocol' \"\$f\""
+check "the built-in Implementation builds through IMPLEMENT.md" bash -c "[ \"\$(status_of '$XN' 1)\" = shipped ] && grep -q '## Confirmed team role' '$XN'/runs/*/stages/*/implementation/1/prompt.md"
+check "the run log says what took effect" bash -c "grep -q 'direction: read 1 note' '$SELFTEST_STATE/changes.out' && grep -q 'team: applied 1 change: Suggestion edited' '$SELFTEST_STATE/changes.out'"
+dash "$XN" "direction.addNote({ body: 'FAIL INTERPRETER: please' });"
+"$SM" -s "$XN" run >"$SELFTEST_STATE/changes-fail.out" 2>&1; xrc=$?
+check "a failed interpretation is logged, the note waits and the round still runs" bash -c "[ '$xrc' = 0 ] &&
+  grep -q 'direction: WARNING: could not read 1 note' '$SELFTEST_STATE/changes-fail.out' &&
+  [ \"\$(jq '[.notes[] | select(.status == \"waiting\")] | length' '$XN/direction/notes.json')\" = 1 ]"
+dash "$XN" "direction.deleteNote(2);
+  team.edit('suggestion', { name: 'Suggestion', count: 1, description: DEFAULT_DESCRIPTIONS.suggest });"
+calls="$(wc -l <"$SELFTEST_STATE/interpreter-calls")"
+"$SM" -s "$XN" run >"$SELFTEST_STATE/changes-default.out" 2>&1; xrc=$?
+check "back to exactly the default team removes active.json without interpreting" bash -c "[ '$xrc' = 0 ] && [ ! -e '$XN/team/active.json' ] &&
+  grep -q 'team: back to the default team' '$SELFTEST_STATE/changes-default.out' && [ \"\$(wc -l <'$SELFTEST_STATE/interpreter-calls')\" = '$calls' ]"
 
 section "teams: the landing gate enforces protected round mode"
 GP="$(new_project teamgate)"; GN="$GP/state"; export SELFTEST_STATE="$GP/selftest"; mkdir -p "$SELFTEST_STATE"

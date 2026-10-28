@@ -106,7 +106,7 @@ team_reply() {  # directory, worktree
 }
 
 team_round() {
-  local stage role sid rid count n i index wt dir rc=0 stage_rc=0 old_model="$model" old_effort="$effort"
+  local stage role sid rid count n i index wt dir m e rc=0 stage_rc=0 old_model="$model" old_effort="$effort"
   local stage_count team_build_limit team_used_ids="" agent_dirs=() agent_wts=() pids=() review_pids=() build_pids=() review_dirs=() review_wts=()
   local team_build_dirs=() team_build_contexts=() team_build_models=() team_build_efforts=()
   stage_count="$(jq '.stages | length' <<<"$team_config")"
@@ -177,6 +177,20 @@ team_round() {
             stage_rc=1; continue
           fi
           run_build "$((index - 1))" & build_pids+=("$!")
+        elif [ "$(jq -r '.builtin // empty' <<<"$role")" = suggest ]; then
+          # The built-in Suggestion role is the standard suggestion agent
+          # (SUGGEST.md), with the focus its description adds.
+          [ "$only" = implement ] && continue
+          suggest_room
+          if [ "$ideas" -eq 0 ]; then
+            say "team $rid: suggestion agent not this round ($waiting waiting for your review; max_waiting is $max_waiting)"; continue
+          fi
+          m="$(jq -r '.model // empty' <<<"$role")"; e="$(jq -r '.effort // empty' <<<"$role")"
+          s_model="${model_override:-${m:-$s_model}}" s_effort="${effort_override:-${e:-$s_effort}}"
+          S_DIR="$dir" S_WT="$WT_ROOT/$run_id-suggest"
+          write_suggest_prompt "$(jq -r '"Role: " + .name + "\n\nFocus from the human\u0027s description of this role:\n\n" + .instructions' <<<"$role")"
+          [ "$dry_run" = 1 ] && continue
+          team_context="" run_suggest & pids+=("$!")
         else
           [ "$only" = implement ] && continue
           wt="$WT_ROOT/$run_id-$team_stage_id-$rid-$n"
