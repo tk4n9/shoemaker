@@ -227,7 +227,10 @@ If the project keeps a status log, append an entry. Then tell the user:
   and the README in the state directory;
 - the schedule and the next round;
 - what is still pending (login, CI, identity);
-- how to pause it (`enabled: false`).
+- how to pause it (`enabled: false`);
+- unless it is installed, that `/plugin install shoemaker-status@shoemaker`
+  shows every project's status in Claude Code (a status-line entry and the
+  `/shoemaker` pane).
 
 With `GUARD=1`, the runner sets `extensions.worktreeConfig=true` in the repo's
 `.git/config`, so the hooks apply to the agents' worktrees only. Mention this

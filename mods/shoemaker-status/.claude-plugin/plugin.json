@@ -1,0 +1,25 @@
+{
+  "name": "shoemaker-status",
+  "version": "0.1.0",
+  "description": "Shows the status of your Shoemaker projects (rounds, timer, queue) in the status line and a /shoemaker pane",
+  "author": { "name": "tk4n9" },
+  "homepage": "https://github.com/tk4n9/shoemaker",
+  "repository": "https://github.com/tk4n9/shoemaker",
+  "keywords": ["shoemaker", "status-line", "agents", "approval-queue"],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "autoOpen": {
+      "type": "string",
+      "title": "Open the pane by itself",
+      "description": "project: when the session starts inside a Shoemaker project's repository, workspace or state directory; always; or never (use /shoemaker)",
+      "default": "project",
+      "options": ["project", "always", "never"]
+    },
+    "pollSeconds": {
+      "type": "number",
+      "title": "Refresh every (seconds)",
+      "description": "How often the status is read again",
+      "default": 60
+    }
+  }
+}

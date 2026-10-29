@@ -9,6 +9,11 @@
       "name": "shoemaker",
       "source": "./plugin",
       "description": "Set up and steer Shoemaker: scheduled Claude Code agents with an approval queue."
+    },
+    {
+      "name": "shoemaker-status",
+      "source": "./mods/shoemaker-status",
+      "description": "The status of your Shoemaker projects in Claude Code's status line and a /shoemaker pane."
     }
   ]
 }

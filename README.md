@@ -95,6 +95,18 @@ skill installs the checkout if needed and inspects the repository. It asks
 you four things (focus, mode, schedule, off-limits areas) and then sets
 everything up. It asks before turning the timer on.
 
+To see your projects' status while you work in Claude Code, also install the
+status mod from the same marketplace:
+
+```text
+/plugin install shoemaker-status@shoemaker
+```
+
+It adds a status-line entry per project (the next round or the one running,
+and what waits for you), a `/shoemaker` pane with the queue, the rounds and
+the latest log, and a toast when a round finishes. See
+[mods/shoemaker-status](mods/shoemaker-status/README.md).
+
 ### By hand
 
 ```sh
@@ -300,6 +312,8 @@ before you turn on `ship`.
   [harness/APPROVE.md](harness/APPROVE.md): the agents' standing
   instructions
 - [dashboard/README.md](dashboard/README.md): developing the dashboard
+- [mods/shoemaker-status/README.md](mods/shoemaker-status/README.md): the
+  Claude Code status mod
 
 ## Repository layout
 
@@ -308,6 +322,7 @@ bin/shoemaker        the command: detect, init, schedule, install, run, doctor, 
 harness/             the runner (run.sh), the merge gate (land.sh), the guard, protocols, templates
 dashboard/           the queue's web app and its CLI (Node ≥ 18, better-sqlite3)
 plugin/              the Claude Code plugin: the setup skill
+mods/                Claude Code mods: shoemaker-status (status line and /shoemaker pane)
 docs/                user documentation
 test/                end-to-end self-test with stand-ins for claude, gh and glab
 ```
