@@ -10,18 +10,24 @@ agent count and a description in your own words.
 ## Add in the form, edit and remove in the team
 
 Open **Team**. The **Add a role** form at the top only adds. Each row of
-**Active team** has **Edit**, which opens the row in place, and **Remove**.
-For example, starting from the default team you might add:
+**Active team** has **Edit**, which turns the row's values into fields where
+they stand, and **Remove**. A role has a name, an agent count, a description
+and, optionally, a model and effort; **Default** uses `DIRECTION.md`'s (see
+below). The Model / effort column shows what each role runs with. For
+example, starting from the default team you might add:
 
 | Role | Agents | Description |
 |---|---|---|
 | Feature review | 2 | Discuss whether each idea is worth building; record reasons and an advisory verdict for the human. |
 | Reporter | 1 | After the builds, write a short report on what changed and what to watch. |
 
-No button runs an agent. A saved change waits, marked on its row (dotted
-tag): an edited row shows its new description with what runs now below it,
-an added row says it joins at the next round, a removed row is struck
-through. **Undo** takes one change back and **Undo all** drops them all.
+No button runs an agent. A saved change waits, marked with a dotted tag.
+An edited row shows each changed value as old → new: what runs now struck
+through, what runs from the next round underlined with dots, and a
+description word by word. A removed row is struck through. Added roles wait
+below the team in their own list, **Joining at the next round**, with
+**Edit** and **Undo**. **Undo** takes one change back and **Undo all** drops
+them all.
 The waiting rows live in `team/pending.json`; when they match the current
 team again, the file is removed.
 
@@ -155,10 +161,12 @@ the item log.
   Auto approval runs in every mode when enabled. `--only approve` runs only
   the approver; `--only suggest` and `--only implement` exclude it. Dry runs
   write its prompt when it has work and start nothing.
-- Roles inherit `model` and `effort` from `DIRECTION.md` unless their
-  descriptions request an override. `suggest_model` and `suggest_effort`
-  apply to the Suggestion agent, in the default team or a team's built-in
-  role.
+- A role runs with the model and effort set on its row. Where the row
+  leaves them at **Default**, it uses `DIRECTION.md`'s `model` and `effort`;
+  `suggest_model` and `suggest_effort` are the defaults for the Suggestion
+  agent, in the default team or a team's built-in role. The interpreter
+  never sets them from a description. Command-line `--model` / `--effort`
+  overrides every role.
   `apply_model` and `apply_effort` affect only the interpreter, never roles.
   `approve_model` and `approve_effort` affect only the auto-approval agent;
   empty or absent values fall back to `model` / `effort`, then to the Claude
@@ -215,12 +223,13 @@ The config has this shape (two additional roles can follow the same form):
 }
 ```
 
-Role `model` and `effort` overrides are optional; a built-in role also has
-`"builtin": "suggest"` or `"implement"`. The validator rejects unknown fields
-or capabilities, invalid or duplicate identifiers, invalid counts, and
-configurations over the cap. Interpretation must preserve the submitted role
-ids, names, descriptions, counts and built-in markers; Shoemaker does not
-trust a model to approve its own output. The runner validates its starting
+A role's `model` and `effort` are optional and come only from its row;
+`effort` is `low`, `medium`, `high`, `xhigh` or `max`. A built-in role also
+has `"builtin": "suggest"` or `"implement"`. The validator rejects unknown
+fields or capabilities, invalid or duplicate identifiers, invalid counts,
+and configurations over the cap. Interpretation must preserve the submitted
+role ids, names, descriptions, counts, built-in markers, models and efforts,
+adding none; Shoemaker does not trust a model to approve its own output. The runner validates its starting
 snapshot too.
 
 Inspect the active config without changing it:

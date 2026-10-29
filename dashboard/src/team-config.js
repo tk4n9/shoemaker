@@ -51,6 +51,18 @@ function string(value, max, label) {
 function identifier(value, label) {
   if (typeof value !== 'string' || !/^[a-z][a-z0-9-]{0,47}$/.test(value)) throw new Error(`${label} must be a safe lowercase identifier`);
 }
+function model(value) {
+  string(value, 160, 'model');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value)) throw new Error('invalid model');
+}
+function effort(value) {
+  if (!EFFORTS.includes(value)) throw new Error('invalid effort');
+}
+// The fields a person sets for a role; the interpreter must keep them as they are.
+export const ROW_FIELDS = ['id', 'name', 'count', 'description', 'builtin', 'model', 'effort'];
+export function rowOf(role) {
+  return Object.fromEntries(ROW_FIELDS.filter((key) => role[key] !== undefined).map((key) => [key, role[key]]));
+}
 function cap(value) {
   if (!Number.isInteger(value) || value < 1 || value > 128) throw new Error('MAX_AGENTS must be an integer from 1 to 128');
 }
@@ -61,7 +73,7 @@ export function validateRows(rows, { maxAgents = 16 } = {}) {
   const names = new Set(), ids = new Set(), builtins = new Set();
   let total = 0;
   for (const row of rows) {
-    object(row, ['id', 'name', 'count', 'description', 'builtin'], 'role');
+    object(row, ROW_FIELDS, 'role');
     string(row.name, 100, 'role name'); string(row.description, 8000, 'role description');
     if (!Number.isInteger(row.count) || row.count < 1) throw new Error('role count must be a positive integer');
     const key = row.name.trim().toLowerCase();
@@ -71,6 +83,8 @@ export function validateRows(rows, { maxAgents = 16 } = {}) {
       if (ids.has(row.id)) throw new Error(`duplicate role id: ${row.id}`);
       ids.add(row.id);
     }
+    if (row.model !== undefined) model(row.model);
+    if (row.effort !== undefined) effort(row.effort);
     if (row.builtin !== undefined) {
       if (!Object.hasOwn(BUILTINS, row.builtin)) throw new Error('builtin must be suggest or implement');
       if (builtins.has(row.builtin)) throw new Error(`only one ${row.builtin} role`);
@@ -107,11 +121,6 @@ export function validateTeam(team, { maxAgents = 16, rows } = {}) {
       if (role.capabilities.includes('build') && role.capabilities.length !== 1) throw new Error('build must be the sole capability of a role');
       if (!AUTHORITIES.includes(role.authority)) throw new Error('authority must be advisory, filter or approve');
       if (!role.capabilities.includes('review') && role.authority !== 'advisory') throw new Error('only review roles may have filter or approve authority');
-      if (role.model !== undefined) {
-        string(role.model, 160, 'model');
-        if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(role.model)) throw new Error('invalid model');
-      }
-      if (role.effort !== undefined && !EFFORTS.includes(role.effort)) throw new Error('invalid effort');
       if (role.builtin !== undefined && (!Object.hasOwn(BUILTINS, role.builtin)
         || role.capabilities.join() !== BUILTINS[role.builtin].join() || role.authority !== 'advisory')) {
         throw new Error('a built-in role keeps its own capability and advisory authority');
@@ -119,13 +128,12 @@ export function validateTeam(team, { maxAgents = 16, rows } = {}) {
       roles.push(role);
     }
   }
-  validateRows(roles.map(({ id, name, count, description, builtin }) => ({ id, name, count, description, ...(builtin ? { builtin } : {}) })), { maxAgents });
+  validateRows(roles.map(rowOf), { maxAgents });
   if (rows) {
     validateRows(rows, { maxAgents });
-    const same = (r, p) => p.name === r.name && p.count === r.count && p.description === r.description
-      && (r.id === undefined || p.id === r.id) && p.builtin === r.builtin;
+    const same = (r, p) => ROW_FIELDS.every((key) => (key === 'id' && r.id === undefined) || p[key] === r[key]);
     if (roles.length !== rows.length || rows.some((r) => !roles.some((p) => same(r, p)))) {
-      throw new Error('interpreted roles must preserve every submitted id, name, count, description and built-in role');
+      throw new Error('interpreted roles must preserve every submitted id, name, count, description, built-in role, model and effort');
     }
   }
   return JSON.parse(JSON.stringify(team));

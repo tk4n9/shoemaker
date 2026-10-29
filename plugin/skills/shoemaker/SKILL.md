@@ -276,9 +276,11 @@ one change to the repository.
     builds; suggestion takes precedence if only one slot is available. An
     approver with work prevents a round from being idle.
 - **Team roles and counts:** use the dashboard's **Team** page. The **Add a
-  role** form adds a name, count and description. Use **Edit** and **Remove**
-  on rows in **Active team**; **Undo** and **Undo all** cancel waiting changes.
-  Saved changes are marked on their rows and kept in `team/pending.json`.
+  role** form adds a name, count, description and optional model and effort.
+  Use **Edit** and **Remove** on rows in **Active team**; **Undo** and **Undo
+  all** cancel waiting changes. Saved edits show old → new on their rows,
+  removals are struck through, and added roles appear in **Joining at the
+  next round**. Changes are kept in `team/pending.json`.
   Saving starts no agent. At the next real round, after Direction notes,
   the tool-free interpreter returns a config for validation and atomic
   activation before that round's team snapshot. A failed interpretation
@@ -299,9 +301,12 @@ one change to the repository.
     **Instructions** shows the interpreted role after application; check
     its capabilities and authority on the page. Decisions remain visible
     in the queue with their reasons.
-  - Roles inherit `DIRECTION.md`'s `model` and `effort` unless their
-    descriptions request an override. `suggest_model` and `suggest_effort`
-    apply to the default Suggestion agent and a team's built-in Suggestion.
+  - Set a role's model and effort with its **Model** and **Effort** controls.
+    **Default** inherits from `DIRECTION.md`; `suggest_model` and
+    `suggest_effort` apply to the default Suggestion agent and a team's
+    built-in Suggestion. Clearing an override restores that inheritance.
+    The interpreter must preserve these fields exactly and cannot set them
+    from a role's description.
   - Set `apply_model` and `apply_effort` in `DIRECTION.md` to override only
     the shared Team and Direction interpreter. Empty or absent values fall
     back to `model` / `effort`, then the Claude Code default. `apply_effort`

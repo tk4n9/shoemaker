@@ -6,11 +6,11 @@ implementation agent builds the approved ones. The queue contract is
 [`../docs/queue.md`](../docs/queue.md).
 
 The **Team** page shows this default pair as the default team and lets you
-add, edit and remove roles. Changes wait until the next round, which
-interprets the descriptions in a tool-free Claude Code session
-(`bin/round-start.mjs`), validates the result and switches the team. A
-reviewer may have `advisory`, `filter` or `approve` authority, with
-decisions and reasons preserved in item logs. See
+add, edit and remove roles, each with an optional model and effort. Changes
+wait until the next round, which interprets the descriptions in a tool-free
+Claude Code session (`bin/round-start.mjs`), validates the result and
+switches the team. A reviewer may have `advisory`, `filter` or `approve`
+authority, with decisions and reasons preserved in item logs. See
 [`../docs/team.md`](../docs/team.md) for the schema and voting rules.
 
 The **Direction** page collects your notes. The next round, through the

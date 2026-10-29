@@ -5,19 +5,18 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { TEAM_SCHEMA, readTeamSettings, validateRows, validateTeam } from './team-config.js';
+import { EFFORTS, TEAM_SCHEMA, readTeamSettings, rowOf, validateRows, validateTeam } from './team-config.js';
 import { DirLock, atomicJSON, conflict, contextFile, interpret, interpreterSettings, readJSON } from './interpreter.js';
 import { defaultRole, defaultRows, sameRows } from './default-team.js';
 
 const services = new Map();
-const rowOf = ({ id, name, count, description, builtin }) => ({ id, name, count, description, ...(builtin ? { builtin } : {}) });
 const notFound = (id) => conflict(`No role ${id} in the team. Reload the page.`);
 const NO_SETTINGS = { maxAgents: 16, model: '', effort: '', suggestModel: '', suggestEffort: '', maxBuilds: 1 };
 
 export function interpretationPrompt(rows, settings, state) {
   return `Interpret these human-authored team roles as a Shoemaker team configuration.
 Return only the structured output matching the supplied JSON schema. You have no tools.
-Keep every role's id, name, count, description and builtin exactly as submitted (no builtin where a row has none). Include each role exactly once.
+Keep every role's id, name, count, description, builtin, model and effort exactly as submitted (omit builtin, model or effort where a row has none). Include each role exactly once.
 Invent concise stage names and lowercase hyphenated stage IDs; stages run in order, roles within each stage run together.
 Use only these capabilities: propose (add ideas), review (discuss waiting ideas and record verdicts),
 build (implement approved items in isolated worktrees through the existing landing gate),
@@ -30,8 +29,7 @@ Use filter only if the description explicitly asks to screen ideas out; a majori
 Use approve only if the description explicitly delegates approval; unanimous approval allows building.
 Non-review roles must be advisory. Never grant authority that a description does not request.
 Generated instructions must describe useful work within the role's capabilities and existing RULES.md limits.
-Only include model or effort overrides when a role description explicitly requests them.
-Otherwise all roles inherit DIRECTION.md model/effort (${settings.model || 'Claude default'}/${settings.effort || 'Claude default'}).
+Model and effort come only from the rows; roles without them use DIRECTION.md's (${settings.model || 'Claude default'}/${settings.effort || 'Claude default'}).
 DIRECTION.md mode always controls how far builds go; no role may override the guard or landing gate.
 The maximum total agent count is ${settings.maxAgents}.
 
@@ -46,6 +44,7 @@ ${contextFile(state, 'RULES.md')}
 `;
 }
 
+const EDITABLE = ['name', 'count', 'description', 'model', 'effort'];
 // The page's marks: each current role kept, edited or removed, then the added ones.
 export function teamChanges(current, pending) {
   if (!pending) return current.map((row) => ({ row, change: null }));
@@ -54,7 +53,7 @@ export function teamChanges(current, pending) {
   return current.map((row) => {
     const after = next.get(row.id);
     if (!after) return { row, change: 'remove' };
-    const edited = after.name !== row.name || after.count !== row.count || after.description !== row.description;
+    const edited = EDITABLE.some((key) => after[key] !== row[key]);
     return edited ? { row: after, was: row, change: 'edit' } : { row, change: null };
   }).concat(pending.filter((row) => !known.has(row.id)).map((row) => ({ row, change: 'add' })));
 }
@@ -73,12 +72,20 @@ function newId(name, rows) {
   return id;
 }
 
+// An empty model or effort means the default from DIRECTION.md.
 function roleInput(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Send a role name, count and description.');
   for (const field of Object.keys(input)) {
-    if (!['name', 'count', 'description'].includes(field)) throw new Error(`Unknown field: ${field}`);
+    if (!EDITABLE.includes(field)) throw new Error(`Unknown field: ${field}`);
   }
-  return { name: String(input.name ?? '').trim(), count: input.count, description: String(input.description ?? '').trim() };
+  const role = { name: String(input.name ?? '').trim(), count: input.count, description: String(input.description ?? '').trim() };
+  const model = String(input.model ?? '').trim(), effort = String(input.effort ?? '').trim();
+  if (model) role.model = model;
+  if (effort) {
+    if (!EFFORTS.includes(effort)) throw new Error(`Effort must be one of ${EFFORTS.join(', ')}.`);
+    role.effort = effort;
+  }
+  return role;
 }
 
 export class TeamService {
@@ -173,7 +180,8 @@ export class TeamService {
     return this.change((rows, current) => {
       const index = rows.findIndex((row) => row.id === id);
       if (index < 0) throw current.some((row) => row.id === id) ? conflict('This role is being removed. Undo that first.') : notFound(id);
-      rows[index] = { ...rows[index], ...role };
+      const { builtin } = rows[index];
+      rows[index] = { id, ...role, ...(builtin ? { builtin } : {}) };
       return rows;
     });
   }

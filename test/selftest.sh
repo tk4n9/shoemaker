@@ -596,7 +596,7 @@ dash() {  # dash STATE JS: what the human does on the Team and Direction pages
     $2"
 }
 dash "$XN" "direction.addNote({ body: 'Phone layout: larger tap targets on the phone.' });
-  team.edit('suggestion', { name: 'Suggestion', count: 1, description: 'UI improvements first.' });"
+  team.edit('suggestion', { name: 'Suggestion', count: 1, description: 'UI improvements first.', model: 'haiku', effort: 'low' });"
 SHOEMAKER_STATE="$XN" "$SM" queue add --title "Approved work" >/dev/null; approve "$XN" 1
 "$SM" -s "$XN" run --dry-run >"$SELFTEST_STATE/changes-dry.out" 2>&1
 check "a dry run only reports the waiting changes" bash -c "grep -q 'direction: 1 note would be read' '$SELFTEST_STATE/changes-dry.out' &&
@@ -609,6 +609,8 @@ check "round start switches to the interpreted team" bash -c "jq -e '[.stages[].
 check "the built-in Suggestion is the standard agent: SUGGEST.md plus its focus" bash -c "f=\$(ls '$XN'/runs/*/stages/*/suggestion/1/prompt.md) &&
   test -f '$SELFTEST_STATE/claude-env-suggestion-agent' && grep -q '## Your role on the team' \"\$f\" &&
   grep -q 'Selftest focus: UI improvements first' \"\$f\" && grep -q '^# Suggestion agent protocol' \"\$f\""
+check "a role's own model and effort survive interpretation and reach its agent" bash -c "jq -e '[.stages[].roles[] | select(.builtin == \"suggest\") | [.model, .effort]] == [[\"haiku\", \"low\"]]' '$XN/team/active.json' >/dev/null &&
+  grep -q -- '--model haiku --effort low' '$SELFTEST_STATE/claude-calls'"
 check "the built-in Implementation builds through IMPLEMENT.md" bash -c "[ \"\$(status_of '$XN' 1)\" = shipped ] && grep -q '## Confirmed team role' '$XN'/runs/*/stages/*/implementation/1/prompt.md"
 check "the run log says what took effect" bash -c "grep -q 'direction: read 1 note' '$SELFTEST_STATE/changes.out' && grep -q 'team: applied 1 change: Suggestion edited' '$SELFTEST_STATE/changes.out'"
 dash "$XN" "direction.addNote({ body: 'FAIL INTERPRETER: please' });"

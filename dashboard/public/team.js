@@ -19,7 +19,13 @@
     name: form.querySelector('[name="name"]').value,
     count: Number(form.querySelector('[name="count"]').value),
     description: form.querySelector('[name="description"]').value,
+    model: form.querySelector('[name="model"]').value,
+    effort: form.querySelector('[name="effort"]').value,
   });
+  // A description field grows with its text, like the row it replaces.
+  const fit = (area) => { area.style.height = 'auto'; area.style.height = `${area.scrollHeight + 2}px`; };
+  page.addEventListener('input', (event) => { if (event.target.matches('.editing textarea')) fit(event.target); });
+  const row = (id) => page.querySelector(`[data-team-row="${CSS.escape(id)}"]`);
   const send = async (control, path, body) => {
     control.disabled = true;
     try { await submit(path, body); }
@@ -38,15 +44,16 @@
     if (!button || button.disabled) return;
     const { teamEdit, teamRemove, teamUndo } = button.dataset;
     if (teamEdit) {
-      page.querySelector(`[data-team-row="${CSS.escape(teamEdit)}"]`).hidden = true;
+      row(teamEdit).hidden = true;
       const editor = page.querySelector(`[data-team-form="${CSS.escape(teamEdit)}"]`);
       editor.hidden = false;
+      fit(editor.querySelector('textarea'));
       editor.querySelector('[name="name"]').focus();
     } else if ('teamCancel' in button.dataset) {
       const editor = button.closest('[data-team-form]');
       editor.hidden = true;
       editor.querySelector('form').reset();
-      page.querySelector(`[data-team-row="${CSS.escape(editor.dataset.teamForm)}"]`).hidden = false;
+      row(editor.dataset.teamForm).hidden = false;
     } else if (teamRemove) send(button, `${role(teamRemove)}/remove`);
     else if (teamUndo) send(button, `${role(teamUndo)}/undo`);
     else if ('teamUndoAll' in button.dataset) send(button, '/team/undo');
@@ -55,7 +62,7 @@
     const editor = event.target.closest('[data-team-form]');
     if (!editor) return;
     event.preventDefault();
-    send(event.target.querySelector('[type="submit"]'), role(editor.dataset.teamForm), fields(event.target));
+    send(editor.querySelector('[type="submit"]'), role(editor.dataset.teamForm), fields(event.target));
   });
 
   // While a round applies the changes, wait for it and show the result.

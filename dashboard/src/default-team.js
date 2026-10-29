@@ -13,14 +13,19 @@ export function defaultRows(settings) {
   ];
 }
 
-// What the page shows for a default role's interpreted columns.
-export function defaultRole(row, settings) {
+// The model and effort a role runs with when its row sets none.
+export function inherited(row, settings) {
   return row.builtin === 'suggest'
-    ? { capabilities: ['propose'], authority: 'advisory', model: settings.suggestModel || settings.model, effort: settings.suggestEffort || settings.effort }
-    : { capabilities: ['build'], authority: 'advisory', model: settings.model, effort: settings.effort };
+    ? { model: settings.suggestModel || settings.model, effort: settings.suggestEffort || settings.effort }
+    : { model: settings.model, effort: settings.effort };
 }
 
-const key = (row) => JSON.stringify([row.id, row.name, row.count, row.description, row.builtin ?? null]);
+// What the page shows for a default role's interpreted columns.
+export function defaultRole(row, settings) {
+  return { capabilities: row.builtin === 'suggest' ? ['propose'] : ['build'], authority: 'advisory', ...inherited(row, settings) };
+}
+
+const key = (row) => JSON.stringify([row.id, row.name, row.count, row.description, row.builtin ?? null, row.model ?? null, row.effort ?? null]);
 export function sameRows(a, b) {
   return a.length === b.length && a.every((row, i) => key(row) === key(b[i]));
 }

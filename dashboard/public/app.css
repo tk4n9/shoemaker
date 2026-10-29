@@ -377,24 +377,44 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
 
 /* Team page: the form adds a role; the team ledger edits and removes them.
    A change waits for the next round, so its mark is drawn in stitches not
-   sewn yet: dotted tags, a dashed line round the waiting count. */
+   sewn yet: dotted tags and underlines, a dashed line round the waiting
+   count. What it replaces is struck through. */
 #team-page .lead, #direction-page .lead { margin: 0 0 20px; max-width: 68ch; }
 #team-page label { display: grid; gap: 4px; color: var(--muted); }
-#team-page .role-fields { display: grid; grid-template-columns: minmax(0, 18rem) 6rem; gap: 10px 12px; }
+#team-page .role-fields { display: grid; grid-template-columns: minmax(0, 18rem) 6rem 10rem 10rem; gap: 10px 12px; }
 #team-page .role-fields .wide { grid-column: 1 / -1; }
-#team-page .role-fields input { width: 100%; }
+#team-page .role-fields :is(input, select) { width: 100%; }
 #team-page .team-ledger { margin: 0 0 12px; }
 #team-page .team-ledger .item-list > li.cols, #team-page .team-ledger .item {
-  display: grid; gap: 0; padding: 0; grid-template-columns: 9rem 4.5rem minmax(0, 1fr) 7rem 8rem 8.5rem;
+  display: grid; gap: 0; padding: 0; grid-template-columns: 9rem 4.5rem minmax(0, 1fr) 6.5rem 9.5rem 8.5rem;
 }
 #team-page .team-ledger .item > :nth-child(2), #team-page .team-ledger li.cols > :nth-child(2) { text-align: right; font-variant-numeric: tabular-nums; }
-#team-page .team-ledger .item.editing { display: block; padding: 10px 12px 12px; background: var(--surface); box-shadow: inset 3px 0 0 var(--ink); }
+/* Edit turns the row's values into fields where they stand. */
+#team-page .team-ledger .item.editing { background: var(--surface); box-shadow: inset 3px 0 0 var(--ink); }
+#team-page .team-ledger .item.editing > form { display: contents; }
+#team-page .team-ledger .item.editing > form > * { padding: 2px 3px; border-left: 1px solid var(--rule); }
+#team-page .team-ledger .item.editing > form > :first-child { border-left: 0; padding-left: 6px; }
+#team-page .team-ledger .item.editing > form > :is(.role-authority, .item-actions) { padding: 3px 8px; }
+#team-page .editing :is(input, textarea, select) { display: block; width: 100%; padding: 1px 4px; line-height: 20px; }
+#team-page .editing textarea { resize: vertical; overflow: hidden; }
+#team-page .editing .role-count input { text-align: right; }
+#team-page .editing .role-model { display: grid; gap: 4px; align-content: start; }
+#team-page .edit-note, #team-page .dflt { display: block; font-size: 13px; color: var(--muted); font-weight: 400; }
+#team-page .edit-note { margin-top: 2px; }
+#team-page .cell-label { display: none; }
+/* A short value's strike runs past its edges, so a struck 1 still reads as 1. */
+#team-page :is(.team-ledger, .change-key) s {
+  color: var(--muted); text-decoration: none; padding: 0 3px;
+  background: linear-gradient(currentColor, currentColor) 0 55% / 100% 1px no-repeat;
+}
+#team-page :is(.team-ledger, .change-key) del { color: var(--muted); text-decoration: line-through; }
+#team-page :is(.team-ledger, .change-key) ins { text-decoration: underline dotted 2px; text-underline-offset: 3px; font-weight: 600; }
+#team-page .change-key { display: block; margin-top: 2px; font-size: 13px; color: var(--muted); }
+#team-page .joining { margin-top: 24px; }
 #team-page .team-ledger .item-list > .item[hidden] { display: none; }
 #team-page .role-stage { display: block; }
 #team-page .role-does .tag { display: inline-block; margin: 1px 0 3px; }
-#team-page .role-does .desc, #team-page .was, #team-page .instr-text { display: block; }
-#team-page .was { margin: 4px 0 0; color: var(--muted); }
-#team-page .was b { color: var(--ink); font-weight: 600; }
+#team-page .role-does .desc, #team-page .instr-text { display: block; }
 #team-page .ch-remove .role-name strong, #team-page .ch-remove .desc { text-decoration: line-through; color: var(--muted); }
 #team-page details.instr { margin-top: 2px; }
 #team-page details.instr summary { cursor: pointer; color: var(--muted); }
@@ -505,6 +525,12 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
   #direction-page .queue-section .note-list > .item > * { grid-column: 1; }
   #direction-page .note-list .item > .note-at { padding-top: 0; font-size: 13px; color: var(--muted); }
   #team-page .team-ledger .item.editing { display: block; padding: 10px 12px 12px; }
-  #team-page .role-fields { grid-template-columns: minmax(0, 1fr) 5.5rem; }
+  #team-page .team-ledger .item.editing > form { display: grid; gap: 10px; }
+  #team-page .team-ledger .item.editing > form > *, #team-page .team-ledger .item.editing > form > :is(:first-child, .role-authority, .item-actions) { padding: 0; border-left: 0; }
+  #team-page .cell-label { display: block; color: var(--muted); margin-bottom: 4px; }
+  #team-page .editing :is(input, textarea, select) { padding: 5px 9px; }
+  #team-page .editing .role-count input { width: 6rem; text-align: left; }
+  #team-page .editing .role-model { gap: 8px; }
+  #team-page .role-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #team-page .waiting { padding: 6px 4px 6px 10px; }
 }

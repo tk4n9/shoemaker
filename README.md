@@ -63,11 +63,12 @@ reason. Nothing reaches your default branch except through the gate.
     turns them into goals in `DIRECTION.md`'s Focus. Remove a goal to stop
     work on it.
 - **A team you define.** The Team page starts from the default team (one
-  suggestion agent, one or more builders). Add roles with a name, count and
-  description, or edit and remove them in place. The next round interprets
-  the changes into stages, capabilities, authority and instructions, and
-  runs with them. Reviewers can discuss ideas before you see them or build
-  them, according to the authority you grant.
+  suggestion agent, one or more builders). Add roles with a name, count,
+  description and optional model and effort, or edit and remove them in
+  place. The next round interprets the changes into stages, capabilities,
+  authority and instructions, and runs with them. Reviewers can discuss
+  ideas before you see them or build them, according to the authority you
+  grant.
 - **Fail-closed safeguards.** Without a login, a Git identity or a working
   push guard, a round only suggests. Every safeguard answers an incident from
   real use: see [docs/lessons.md](docs/lessons.md).
@@ -209,18 +210,20 @@ Without configuration, the **Team** page shows the default team: Suggestion
 ×1 and Implementation × `max_builds`, which is exactly the round above. Add
 a role with the form at the top, for example three feature suggestion
 agents, two feature reviewers who discuss whether ideas are worth building,
-or a reporter. Edit or remove a role on its row in **Active team**. Say
-explicitly if a reviewer may filter out ideas or approve them for building;
-the default is advisory, so you still decide.
+or a reporter. Edit or remove a role on its row in **Active team**. Each
+role can pick its own model and effort; left at **Default**, it uses
+`DIRECTION.md`'s. Say explicitly if a reviewer may filter out ideas or
+approve them for building; the default is advisory, so you still decide.
 
-Changes wait, marked on their rows, until the next round starts. Then a
-Claude Code session with no tools interprets the descriptions into ordered
-stages and role instructions, Shoemaker validates the result, and that round
-runs with the new team. **Instructions** on each row shows what its agent
-was told. If the interpretation fails, the round runs the current team and
-the changes keep waiting, with the reason. Suggestion and Implementation
-keep `SUGGEST.md` and `IMPLEMENT.md` in any team; their descriptions add a
-focus.
+Changes wait until the next round starts: an edit is marked on its row as
+old → new, a removal is struck through, and added roles wait in a list below
+the team. Then a Claude Code session with no tools interprets the
+descriptions into ordered stages and role instructions, Shoemaker validates
+the result, and that round runs with the new team. **Instructions** on each
+row shows what its agent was told. If the interpretation fails, the round
+runs the current team and the changes keep waiting, with the reason.
+Suggestion and Implementation keep `SUGGEST.md` and `IMPLEMENT.md` in any
+team; their descriptions add a focus.
 
 Each round reads the active team once. Its stages run in order, with agents
 in each stage running in parallel. The fixed capabilities are `propose`,
@@ -228,7 +231,8 @@ in each stage running in parallel. The fixed capabilities are `propose`,
 operations. The total build count replaces `max_builds`, while `max_waiting`
 and `per_round` apply to all proposers together. `MAX_AGENTS` in
 `shoemaker.conf` caps total agents per round (16 when absent). `DIRECTION.md`
-still controls pausing, the build mode and default model/effort.
+still controls pausing, the build mode and the default model/effort for
+roles that set none.
 
 Auto approval runs alongside the first stage and finishes before the round
 ends. Later build stages can use its approvals. It counts as one agent: a

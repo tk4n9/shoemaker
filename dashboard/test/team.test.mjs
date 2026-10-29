@@ -88,7 +88,9 @@ test('without a team the page shows the default team, the add form and per-row c
   assert.match(html, /Active team: default/);
   assert.match(html, /one agent suggests ideas and one builds/);
   assert.match(html, /id="team-add-form"/);
-  for (const name of ['name', 'count', 'description']) assert.ok(html.includes(`name="${name}"`));
+  for (const name of ['name', 'count', 'description', 'model', 'effort']) assert.ok(html.includes(`name="${name}"`));
+  assert.match(html, /<option value="">Default \(sonnet\)<\/option>/);
+  assert.match(html, /sonnet \/ high<span class="dflt">default<\/span>/);
   for (const control of ['data-team-edit="suggestion"', 'data-team-remove="suggestion"', 'data-team-edit="implementation"']) assert.ok(html.includes(control));
   assert.match(html, /Built in: <code>SUGGEST\.md<\/code>, as today\./);
   assert.ok(html.includes(DEFAULT_DESCRIPTIONS.suggest));
@@ -104,19 +106,24 @@ test('the default Implementation count follows max_builds', () => {
 
 test('add, edit and remove wait in pending.json and are marked on their rows', async () => {
   assert.equal((await post('/team/roles', reviewer)).status, 200);
-  const edited = { name: 'Suggestion', count: 1, description: 'Suggest UI improvements first.' };
+  const edited = { name: 'Suggestion', count: 1, description: 'Find small UI features and propose each with a concrete spec.', model: 'opus', effort: '' };
   assert.equal((await post('/team/roles/suggestion', edited)).status, 200);
   assert.equal(existsSync(join(state, 'team', 'active.json')), false);
   const pending = read(join(state, 'team', 'pending.json'));
   assert.deepEqual(pending.rows.map((r) => r.id), ['suggestion', 'implementation', 'reviewer']);
   assert.equal(pending.rows[0].builtin, 'suggest');
+  assert.equal(pending.rows[0].model, 'opus');
+  assert.equal('effort' in pending.rows[0], false);
   const snapshot = getTeamService().status();
   assert.equal(snapshot.changes, 2);
   assert.deepEqual(snapshot.view.map((v) => v.change), ['edit', null, 'add']);
   const html = await page();
   assert.match(html, /Edited · from the next round/);
-  assert.match(html, /Added · joins at the next round/);
-  assert.match(html, /<b>Runs now:<\/b> Find small features/);
+  assert.match(html, /<s>runs now<\/s> → <ins>from the next round<\/ins>/);
+  assert.match(html, /<s>sonnet<\/s> → <ins>opus<\/ins> \/ high<span class="dflt">default effort<\/span>/);
+  assert.ok(html.includes('Find small <ins>UI</ins> features <del>that fit DIRECTION.md</del> and propose each with a concrete spec<del>, for you to approve</del>.'));
+  assert.match(html, /Joining at the next round <span class="count">1<\/span>/);
+  assert.doesNotMatch(html.split('Joining at the next round')[0], /<strong>Reviewer<\/strong>/);
   assert.match(html, /2 changes<\/strong> take effect when the next round starts/);
   assert.match(html, /set at the next round/);
   assert.equal((await post('/team/roles/implementation/remove')).status, 200);
@@ -232,7 +239,7 @@ for (const [name, baseModel, baseEffort, overrides, model, effort] of [
       if (value) assert.equal(args[args.indexOf(flag) + 1], value);
       else assert.ok(!args.includes(flag));
     }
-    assert.ok(input.includes(`Otherwise all roles inherit DIRECTION.md model/effort (${baseModel || 'Claude default'}/${baseEffort || 'Claude default'}).`));
+    assert.ok(input.includes(`roles without them use DIRECTION.md's (${baseModel || 'Claude default'}/${baseEffort || 'Claude default'}).`));
   });
 }
 
@@ -380,10 +387,11 @@ test('the page script adds a role, opens a row for editing and sends the edit as
   const field = (value) => ({ value, focus() {} });
   const addForm = { addEventListener: (event, handler) => { addListeners[event] = handler; },
     querySelector: (selector) => ({ '[type="submit"]': { disabled: false }, '[name="name"]': field('Reviewer'),
-      '[name="count"]': field('2'), '[name="description"]': field('Review ideas.') })[selector] };
+      '[name="count"]': field('2'), '[name="description"]': field('Review ideas.'), '[name="model"]': field('sonnet'), '[name="effort"]': field('') })[selector] };
   const row = { hidden: false };
+  const area = { style: {}, scrollHeight: 60 };
   const editForm = { querySelector: (selector) => ({ '[type="submit"]': { disabled: false }, '[name="name"]': field('Suggestion'),
-    '[name="count"]': field('1'), '[name="description"]': field('UI first.') })[selector] };
+    '[name="count"]': field('1'), '[name="description"]': field('UI first.'), '[name="model"]': field(''), '[name="effort"]': field('max'), textarea: area })[selector] };
   const editor = { hidden: true, dataset: { teamForm: 'suggestion' }, querySelector: (selector) => editForm.querySelector(selector) };
   editForm.closest = () => editor;
   const page = { dataset: { applying: '0' }, addEventListener: (event, handler) => { listeners[event] = handler; },
@@ -396,14 +404,48 @@ test('the page script adds a role, opens a row for editing and sends the edit as
     location: { reload() {} },
   });
   await addListeners.submit({ preventDefault() {} });
-  assert.deepEqual(sent[0], { url: '/scratch/team/roles', body: { name: 'Reviewer', count: 2, description: 'Review ideas.' }, type: 'application/json' });
+  assert.deepEqual(sent[0], { url: '/scratch/team/roles', body: { name: 'Reviewer', count: 2, description: 'Review ideas.', model: 'sonnet', effort: '' }, type: 'application/json' });
   const edit = { disabled: false, dataset: { teamEdit: 'suggestion' } };
   listeners.click({ target: { closest: () => edit } });
   assert.equal(row.hidden, true);
   assert.equal(editor.hidden, false);
+  assert.equal(area.style.height, '62px');
   listeners.submit({ target: editForm, preventDefault() {} });
   await pause(0);
-  assert.deepEqual(sent[1], { url: '/scratch/team/roles/suggestion', body: { name: 'Suggestion', count: 1, description: 'UI first.' }, type: 'application/json' });
+  assert.deepEqual(sent[1], { url: '/scratch/team/roles/suggestion', body: { name: 'Suggestion', count: 1, description: 'UI first.', model: '', effort: 'max' }, type: 'application/json' });
+});
+
+test('a role may set its model and effort; left empty, it uses DIRECTION.md\'s', async () => {
+  const s = project();
+  const team = service(s);
+  team.add({ ...reviewer, model: 'haiku', effort: 'low' });
+  assert.throws(() => team.add({ ...reviewer, name: 'Other', effort: 'extreme' }), /Effort must be one of low, medium, high, xhigh, max\./);
+  assert.throws(() => team.add({ ...reviewer, name: 'Other', model: '--bad-flag' }), /invalid model/);
+  team.edit('implementation', { name: 'Implementation', count: 1, description: DEFAULT_DESCRIPTIONS.implement, model: '', effort: 'max' });
+  const rows = read(join(s, 'team', 'pending.json')).rows;
+  assert.deepEqual(rows[1], { id: 'implementation', name: 'Implementation', count: 1, description: DEFAULT_DESCRIPTIONS.implement, effort: 'max', builtin: 'implement' });
+  assert.deepEqual(rows[2], { id: 'reviewer', ...reviewer, model: 'haiku', effort: 'low' });
+  assert.deepEqual(team.status().view.map((v) => v.change), [null, 'edit', 'add']);
+  const record = await team.applyPending();
+  assert.equal(record.status, 'applied');
+  const { input } = read(join(s, record.logs, 'invocation.json'));
+  assert.match(input, /"model": "haiku"/);
+  const roles = read(join(s, 'team', 'active.json')).stages.flatMap((stage) => stage.roles);
+  assert.deepEqual(roles.map((r) => [r.id, r.model, r.effort]), [['suggestion', undefined, undefined], ['implementation', undefined, 'max'], ['reviewer', 'haiku', 'low']]);
+  team.edit('reviewer', { ...reviewer, model: '', effort: '' });
+  assert.deepEqual(read(join(s, 'team', 'pending.json')).rows[2], { id: 'reviewer', ...reviewer });
+  const { teamPage } = await import('../src/features/team.js');
+  assert.ok(teamPage(team.status()).includes('<s>haiku</s> → <ins>sonnet</ins> / <s>low</s> → <ins>high</ins><span class="dflt">default</span>'));
+});
+
+test('interpretation must keep each row\'s model and effort as submitted', () => {
+  const rows = [{ id: 'ideas', name: 'Ideas', count: 3, description: 'Propose focused improvements.', model: 'haiku' }];
+  assert.ok(validateTeam(makeTeam(rows), { rows }));
+  const bare = { ...rows[0] };
+  delete bare.model;
+  for (const role of [{ ...rows[0], model: 'opus' }, bare, { ...rows[0], effort: 'max' }]) {
+    assert.throws(() => validateTeam(makeTeam([role]), { rows }), /preserve every submitted id, name, count, description, built-in role, model and effort/);
+  }
 });
 
 test('shared validation permits custom stages and review authority, but rejects unknown fields and powers', () => {
