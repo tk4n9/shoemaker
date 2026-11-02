@@ -5,6 +5,8 @@
    - The one thread colour means "your turn": the number tag of an item that
      waits for you, and nothing else is yellow.
    - Things you press are boxes with a hard 2px shadow. Every corner is square.
+   - Every size is in px, like the text. Never rem: it follows the browser's
+     font-size setting, so a rem column shrinks under its px text there.
    - The seam of five stitches (idea, approved, building, your merge, shipped)
      marks where an item stands on its own page, and the current page in the nav. */
 
@@ -103,7 +105,7 @@ h1 { font-size: var(--fs-l); font-weight: 600; margin: 8px 0 20px; }
 .brand .seam i { width: 6px; }
 .nav-links { display: flex; gap: 10px; flex: 1; }
 .nav-links a {
-  min-width: 7.5rem; padding: 5px 12px; text-align: center; text-decoration: none;
+  min-width: 120px; padding: 5px 12px; text-align: center; text-decoration: none;
   border: 1px solid var(--field); background: var(--surface);
 }
 .nav-links a:hover { border-color: var(--ink); }
@@ -225,9 +227,9 @@ details.queue-section[open] summary h2::before { content: '▾'; }
 .item-list { list-style: none; padding: 0; margin: 0; border: 1px solid var(--stitch); background: var(--canvas); }
 .item-list > li.empty { padding: 10px; }
 .item-list > li.cols, .queue-section .item {
-  display: grid; grid-template-columns: 3.75rem 6.75rem minmax(0, 1fr) 8.5rem 10rem; line-height: 20px;
+  display: grid; grid-template-columns: 60px 108px minmax(0, 1fr) 136px 160px; line-height: 20px;
 }
-.item-list.brief > li.cols, .item-list.brief > .item { grid-template-columns: 3.75rem 6.75rem minmax(0, 1fr); }
+.item-list.brief > li.cols, .item-list.brief > .item { grid-template-columns: 60px 108px minmax(0, 1fr); }
 .item-list > li.cols { font-weight: 600; border-bottom: 1px solid var(--ink); }
 .queue-section .item { align-items: stretch; border-bottom: 1px solid var(--rule); }
 .queue-section .item:last-child { border-bottom: 0; }
@@ -256,6 +258,8 @@ details.queue-section[open] summary h2::before { content: '▾'; }
   grid-column: 1 / -1; display: block; text-align: center; text-decoration: none; border: 1px solid var(--field);
 }
 .queue-section .item-actions .btn:hover { border-color: var(--ink); }
+/* "Approve with #N" takes its own row under Approve and Reject, and grows if its list wraps. */
+.queue-section .item-actions [data-with-prereqs] { grid-column: 1 / -1; order: 1; height: auto; }
 .queue-section .item-actions:has(> .pr) { display: block; }
 .queue-section .item-actions:empty::before { content: '—'; color: var(--muted); grid-column: 1 / -1; text-align: center; }
 .chip {
@@ -370,7 +374,7 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
 .dash-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin: 4px 0 6px; }
 .facts.overnight { margin: 0 0 32px; }
 .log-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--stitch); background: var(--canvas); }
-.log-list li { display: grid; grid-template-columns: 13rem minmax(0, 1fr); border-bottom: 1px solid var(--rule); }
+.log-list li { display: grid; grid-template-columns: 208px minmax(0, 1fr); border-bottom: 1px solid var(--rule); }
 .log-list li:last-child { border-bottom: 0; }
 .log-list li > * { padding: 7px 10px; }
 .log-list li > * + * { border-left: 1px solid var(--rule); }
@@ -381,12 +385,12 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
    count. What it replaces is struck through. */
 #team-page .lead, #direction-page .lead { margin: 0 0 20px; max-width: 68ch; }
 #team-page label { display: grid; gap: 4px; color: var(--muted); }
-#team-page .role-fields { display: grid; grid-template-columns: minmax(0, 18rem) 6rem 10rem 10rem; gap: 10px 12px; }
+#team-page .role-fields { display: grid; grid-template-columns: minmax(0, 288px) 96px 160px 160px; gap: 10px 12px; }
 #team-page .role-fields .wide { grid-column: 1 / -1; }
 #team-page .role-fields :is(input, select) { width: 100%; }
 #team-page .team-ledger { margin: 0 0 12px; }
 #team-page .team-ledger .item-list > li.cols, #team-page .team-ledger .item {
-  display: grid; gap: 0; padding: 0; grid-template-columns: 9rem 4.5rem minmax(0, 1fr) 6.5rem 9.5rem 8.5rem;
+  display: grid; gap: 0; padding: 0; grid-template-columns: 144px 72px minmax(0, 1fr) 104px 152px 136px;
 }
 #team-page .team-ledger .item > :nth-child(2), #team-page .team-ledger li.cols > :nth-child(2) { text-align: right; font-variant-numeric: tabular-nums; }
 /* Edit turns the row's values into fields where they stand. */
@@ -428,10 +432,10 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
 .reader { margin: 12px 0; }
 #direction-page .queue-section.notes { margin: 0; }
 #direction-page .queue-section .note-list > li.cols, #direction-page .queue-section .note-list > .item {
-  grid-template-columns: 7.5rem minmax(0, 1.2fr) minmax(0, 1fr) 5.5rem;
+  grid-template-columns: 120px minmax(0, 1.2fr) minmax(0, 1fr) 88px;
 }
 #direction-page .queue-section .goal-list > li.cols, #direction-page .queue-section .goal-list > .item {
-  grid-template-columns: 2.75rem 12rem minmax(0, 1fr) 10rem 5.5rem;
+  grid-template-columns: 44px 192px minmax(0, 1fr) 160px 88px;
 }
 #direction-page .queue-section .item-actions { grid-template-columns: 1fr; }
 #direction-page .note-list .item:not(.waiting) { color: var(--muted); }
@@ -465,7 +469,7 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
   .brand { grid-area: brand; }
   .nav-controls { grid-area: controls; }
   .nav-links { grid-area: links; gap: 8px; }
-  .nav-links a { min-width: 6.5rem; padding: 9px 10px; }
+  .nav-links a { min-width: 104px; padding: 9px 10px; }
   button, input:not([type="checkbox"]):not([type="radio"]), select, .seg-btn { min-height: 40px; }
   .add-form input { flex: 1 1 100%; }
   .add-form select { flex: 0 0 auto; }
@@ -474,7 +478,7 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
      then status · priority, then the decisions as two full-size buttons. */
   .item-list > li.cols { display: none; }
   .queue-section .item, .item-list.brief > .item {
-    grid-template-columns: 3.5rem auto minmax(0, 1fr); align-items: baseline;
+    grid-template-columns: 56px auto minmax(0, 1fr); align-items: baseline;
   }
   .queue-section .item > * { padding: 0 12px; border-left: 0; }
   .queue-section .item > .item-id {
@@ -495,7 +499,7 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
   .queue-section .item.st-shipped > .item-actions { grid-column: 3; grid-row: 2; padding: 2px 12px 10px 0; }
   .queue-section .item.st-shipped > .item-actions::before { content: '·'; margin: 0 8px; }
   .queue-section .item.st-shipped > .item-actions .pr { margin-left: 0; }
-  .facts { grid-template-columns: 7.5rem minmax(0, 1fr); }
+  .facts { grid-template-columns: 120px minmax(0, 1fr); }
   .facts dt, .facts dd { padding: 7px 10px; }
   .log-list li { grid-template-columns: 1fr; }
   .log-list li > * + * { border-left: 0; padding-top: 0; }
@@ -504,7 +508,7 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
   .nav-links a.active::before { margin-right: 5px; width: 7px; }
   /* Direction and team ledgers: each row stacks its cells, labelled by position. */
   #direction-page .queue-section .item-list > .item, #team-page .queue-section .item-list > .item {
-    display: grid; grid-template-columns: 2.75rem minmax(0, 1fr); padding: 8px 0;
+    display: grid; grid-template-columns: 44px minmax(0, 1fr); padding: 8px 0;
   }
   #direction-page .queue-section .item > *, #team-page .queue-section .item > * { grid-column: 2; padding: 1px 12px; border-left: 0; }
   #direction-page .goal-list .item > .item-id { grid-column: 1; grid-row: 1 / span 4; padding: 1px 0 0 8px; }
@@ -529,7 +533,7 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
   #team-page .team-ledger .item.editing > form > *, #team-page .team-ledger .item.editing > form > :is(:first-child, .role-authority, .item-actions) { padding: 0; border-left: 0; }
   #team-page .cell-label { display: block; color: var(--muted); margin-bottom: 4px; }
   #team-page .editing :is(input, textarea, select) { padding: 5px 9px; }
-  #team-page .editing .role-count input { width: 6rem; text-align: left; }
+  #team-page .editing .role-count input { width: 96px; text-align: left; }
   #team-page .editing .role-model { gap: 8px; }
   #team-page .role-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #team-page .waiting { padding: 6px 4px 6px 10px; }
