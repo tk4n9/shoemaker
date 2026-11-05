@@ -59,7 +59,7 @@ bin/round-start.mjs  run.sh's first step: Direction notes, then team changes
 scripts/       new-page.mjs (scaffolder), check.mjs (feedback loop)
 test/          node:test tests: smoke (HTTP), queue (rules + CLI), graph, team, direction
 docs/          deeper guides
-public/        app.js, app.css (the Seam style: tokens and rules at its top), fonts/ (Atkinson Hyperlegible, OFL)
+public/        app.js, app.css (the Seam style: tokens and rules at its top), fonts/ (Pretendard and Atkinson Hyperlegible Mono, OFL)
 ```
 
 ## Data model

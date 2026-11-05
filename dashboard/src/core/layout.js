@@ -63,6 +63,7 @@ export function layout({ title, body, theme = 'light', navItems = [], activePath
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${esc(title)}</title>
+  <link rel="stylesheet" href="${u('/static/fonts/pretendard/pretendardvariable-dynamic-subset.css')}">
   <link rel="stylesheet" href="${u('/static/app.css')}">
 </head>
 <body data-base="${esc(config.base_path)}">
