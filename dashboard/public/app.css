@@ -443,7 +443,9 @@ dialog.ask::backdrop { background: rgb(20 22 31 / 0.45); }
 /* Login */
 .login { max-width: 320px; margin: 96px auto; text-align: center; border: 1px solid var(--rule); background: var(--surface); padding: 28px 24px; }
 .login h1 { margin: 0; }
-.login form { display: grid; gap: 12px; margin-top: 16px; }
+/* minmax(0, 1fr): the field fills the card. An auto column grows to the field's
+   default width, 20 average characters, which Pretendard's Korean makes 296px. */
+.login form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 16px; }
 
 @media (max-width: 1028px) {
   body { margin-inline: 16px; }
